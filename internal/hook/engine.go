@@ -59,6 +59,13 @@ func (e *Engine) Rules() []config.RuleConfig {
 	return e.rules
 }
 
+// RuleCount returns the number of loaded rules.
+func (e *Engine) RuleCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.rules)
+}
+
 // Evaluate processes a hook event against all rules and returns an aggregated response.
 func (e *Engine) Evaluate(event *protocol.HookEvent) *protocol.HookResponse {
 	e.mu.RLock()

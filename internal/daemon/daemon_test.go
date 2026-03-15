@@ -30,7 +30,7 @@ func TestDaemonRoundTrip(t *testing.T) {
 
 	d := New(cfg)
 	handler := NewHandler(d)
-	srv := NewSocketServer(socketPath, handler, d.logger)
+	srv := NewSocketServer(socketPath, handler, NewSubscriptionManager(d, d.logger), d.logger)
 
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -90,7 +90,7 @@ func TestDaemonConcurrentConnections(t *testing.T) {
 
 	d := New(cfg)
 	handler := NewHandler(d)
-	srv := NewSocketServer(socketPath, handler, d.logger)
+	srv := NewSocketServer(socketPath, handler, NewSubscriptionManager(d, d.logger), d.logger)
 
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)

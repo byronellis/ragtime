@@ -1,6 +1,9 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // MessageType identifies the kind of message sent over the wire.
 type MessageType string
@@ -66,4 +69,42 @@ type CommandResponse struct {
 	Success bool   `json:"success"`
 	Data    any    `json:"data,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+// SubscribeRequest is sent by TUI clients to start streaming events.
+type SubscribeRequest struct {
+	EventTypes []string `json:"event_types,omitempty"` // filter (empty = all)
+}
+
+// SubscribeResponse is the initial reply with a daemon state snapshot.
+type SubscribeResponse struct {
+	Success    bool          `json:"success"`
+	DaemonInfo DaemonInfo    `json:"daemon_info"`
+	Sessions   []SessionInfo `json:"sessions"`
+	Error      string        `json:"error,omitempty"`
+}
+
+// DaemonInfo describes the running daemon.
+type DaemonInfo struct {
+	PID        int       `json:"pid"`
+	StartedAt  time.Time `json:"started_at"`
+	SocketPath string    `json:"socket_path"`
+	RuleCount  int       `json:"rule_count"`
+}
+
+// SessionInfo is a summary of an active session.
+type SessionInfo struct {
+	Agent      string    `json:"agent"`
+	SessionID  string    `json:"session_id"`
+	StartedAt  time.Time `json:"started_at"`
+	EventCount int       `json:"event_count"`
+	LastEvent  time.Time `json:"last_event,omitempty"`
+}
+
+// StreamEvent wraps events pushed to TUI subscribers.
+type StreamEvent struct {
+	Kind      string       `json:"kind"` // "hook_event", "session_update"
+	Timestamp time.Time    `json:"timestamp"`
+	Event     *HookEvent   `json:"event,omitempty"`
+	Session   *SessionInfo `json:"session,omitempty"`
 }

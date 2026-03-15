@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/byronellis/ragtime/internal/bus"
 	"github.com/byronellis/ragtime/internal/config"
@@ -21,13 +22,15 @@ import (
 
 // Daemon is the central ragtime process.
 type Daemon struct {
-	cfg      *config.Config
-	socket   *SocketServer
-	engine   *hook.Engine
-	sessions *session.Manager
-	indexer  *session.SessionIndexer
-	bus      *bus.Bus
-	logger   *slog.Logger
+	cfg       *config.Config
+	socket    *SocketServer
+	engine    *hook.Engine
+	sessions  *session.Manager
+	indexer   *session.SessionIndexer
+	bus       *bus.Bus
+	subs      *SubscriptionManager
+	startedAt time.Time
+	logger    *slog.Logger
 }
 
 // New creates a new Daemon with the given config.
@@ -44,6 +47,8 @@ func New(cfg *config.Config) *Daemon {
 
 // Run starts the daemon and blocks until interrupted.
 func (d *Daemon) Run(ctx context.Context) error {
+	d.startedAt = time.Now()
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -104,11 +109,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 		defer watcher.Stop()
 	}
 
+	// Create subscription manager for TUI streaming
+	d.subs = NewSubscriptionManager(d, d.logger)
+
+	// Subscribe to bus for TUI broadcasting
+	d.bus.Subscribe(func(event *protocol.HookEvent) {
+		d.subs.Broadcast(&protocol.StreamEvent{
+			Kind:      "hook_event",
+			Timestamp: time.Now(),
+			Event:     event,
+		})
+	})
+
 	// Create and start the request handler
 	handler := NewHandler(d)
 
 	// Start socket server
-	d.socket = NewSocketServer(d.cfg.Daemon.Socket, handler, d.logger)
+	d.socket = NewSocketServer(d.cfg.Daemon.Socket, handler, d.subs, d.logger)
 	if err := d.socket.Start(); err != nil {
 		return fmt.Errorf("start socket: %w", err)
 	}
