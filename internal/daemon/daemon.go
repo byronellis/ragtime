@@ -15,25 +15,28 @@ import (
 	"github.com/byronellis/ragtime/internal/project"
 	"github.com/byronellis/ragtime/internal/rag"
 	"github.com/byronellis/ragtime/internal/rag/providers"
+	"github.com/byronellis/ragtime/internal/session"
 )
 
 // Daemon is the central ragtime process.
 type Daemon struct {
-	cfg    *config.Config
-	socket *SocketServer
-	engine *hook.Engine
-	bus    *bus.Bus
-	logger *slog.Logger
+	cfg      *config.Config
+	socket   *SocketServer
+	engine   *hook.Engine
+	sessions *session.Manager
+	bus      *bus.Bus
+	logger   *slog.Logger
 }
 
 // New creates a new Daemon with the given config.
 func New(cfg *config.Config) *Daemon {
 	logger := slog.Default()
 	return &Daemon{
-		cfg:    cfg,
-		engine: hook.NewEngine(cfg.Rules, logger),
-		bus:    bus.New(),
-		logger: logger,
+		cfg:      cfg,
+		engine:   hook.NewEngine(cfg.Rules, logger),
+		sessions: session.NewManager(logger),
+		bus:      bus.New(),
+		logger:   logger,
 	}
 }
 

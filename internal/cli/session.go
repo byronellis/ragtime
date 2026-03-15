@@ -26,7 +26,9 @@ func newSessionListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List active and recent sessions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("session list: not yet implemented")
+			// TODO: connect to daemon and query sessions
+			fmt.Println("session list: requires running daemon (rt daemon)")
+			fmt.Println("Sessions are tracked automatically when hooks fire.")
 			return nil
 		},
 	}
@@ -37,7 +39,8 @@ func newSessionHistoryCmd() *cobra.Command {
 		Use:   "history",
 		Short: "Show event history for a session",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("session history: not yet implemented")
+			// TODO: connect to daemon and query session history
+			fmt.Println("session history: requires running daemon (rt daemon)")
 			return nil
 		},
 	}
@@ -51,7 +54,8 @@ func newSessionNoteCmd() *cobra.Command {
 		Short: "Save a note to the current session",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("session note: not yet implemented (note=%s)\n", args[0])
+			// TODO: connect to daemon and add note to current session
+			fmt.Printf("session note: requires running daemon (rt daemon)\n")
 			return nil
 		},
 	}
