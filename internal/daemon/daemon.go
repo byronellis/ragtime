@@ -9,21 +9,31 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/byronellis/ragtime/internal/bus"
 	"github.com/byronellis/ragtime/internal/config"
+	"github.com/byronellis/ragtime/internal/hook"
+	"github.com/byronellis/ragtime/internal/project"
+	"github.com/byronellis/ragtime/internal/rag"
+	"github.com/byronellis/ragtime/internal/rag/providers"
 )
 
 // Daemon is the central ragtime process.
 type Daemon struct {
 	cfg    *config.Config
 	socket *SocketServer
+	engine *hook.Engine
+	bus    *bus.Bus
 	logger *slog.Logger
 }
 
 // New creates a new Daemon with the given config.
 func New(cfg *config.Config) *Daemon {
+	logger := slog.Default()
 	return &Daemon{
 		cfg:    cfg,
-		logger: slog.Default(),
+		engine: hook.NewEngine(cfg.Rules, logger),
+		bus:    bus.New(),
+		logger: logger,
 	}
 }
 
@@ -45,6 +55,24 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer os.Remove(pidPath)
 
+	// Load rules and initialize engine
+	rules := d.loadAllRules()
+	d.engine = hook.NewEngine(rules, d.logger)
+
+	// Initialize RAG engine and connect to hook engine
+	ragEngine := d.initRAG()
+	if ragEngine != nil {
+		d.engine.SetRAG(ragEngine)
+	}
+
+	// Start config watcher for hot reload
+	watcher, err := d.startWatcher()
+	if err != nil {
+		d.logger.Warn("hot reload disabled", "error", err)
+	} else if watcher != nil {
+		defer watcher.Stop()
+	}
+
 	// Create and start the request handler
 	handler := NewHandler(d)
 
@@ -58,6 +86,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.logger.Info("daemon started",
 		"socket", d.cfg.Daemon.Socket,
 		"pid", os.Getpid(),
+		"rules", len(rules),
 	)
 
 	// Wait for shutdown signal
@@ -72,4 +101,80 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (d *Daemon) loadAllRules() []config.RuleConfig {
+	// Start with rules from config
+	rules := append([]config.RuleConfig{}, d.cfg.Rules...)
+
+	// Load from global rules dir
+	globalDir := project.GlobalDir()
+	if globalDir != "" {
+		dirRules, err := hook.LoadRulesFromDirs(filepath.Join(globalDir, "rules"))
+		if err != nil {
+			d.logger.Error("load global rules", "error", err)
+		} else {
+			rules = append(rules, dirRules...)
+		}
+	}
+
+	// Load from per-project rules dir
+	cwd, _ := os.Getwd()
+	projDir := project.RagtimeDir(cwd)
+	if projDir != "" {
+		dirRules, err := hook.LoadRulesFromDirs(filepath.Join(projDir, "rules"))
+		if err != nil {
+			d.logger.Error("load project rules", "error", err)
+		} else {
+			rules = append(rules, dirRules...)
+		}
+	}
+
+	return rules
+}
+
+func (d *Daemon) initRAG() *rag.Engine {
+	var indexDirs []string
+
+	cwd, _ := os.Getwd()
+	projDir := project.RagtimeDir(cwd)
+	if projDir != "" {
+		indexDirs = append(indexDirs, filepath.Join(projDir, "indexes"))
+	}
+
+	globalDir := project.GlobalDir()
+	if globalDir != "" {
+		indexDirs = append(indexDirs, filepath.Join(globalDir, "indexes"))
+	}
+
+	if len(indexDirs) == 0 {
+		return nil
+	}
+
+	provider := providers.NewOllama(d.cfg.Embeddings.Endpoint, d.cfg.Embeddings.Model)
+	return rag.NewEngine(indexDirs, provider, d.logger)
+}
+
+func (d *Daemon) startWatcher() (*config.Watcher, error) {
+	w, err := config.NewWatcher(func(paths []string) {
+		rules := d.loadAllRules()
+		d.engine.SetRules(rules)
+	}, d.logger)
+	if err != nil {
+		return nil, err
+	}
+
+	globalDir := project.GlobalDir()
+	if globalDir != "" {
+		w.Watch(globalDir, filepath.Join(globalDir, "rules"))
+	}
+
+	cwd, _ := os.Getwd()
+	projDir := project.RagtimeDir(cwd)
+	if projDir != "" {
+		w.Watch(projDir, filepath.Join(projDir, "rules"))
+	}
+
+	w.Start()
+	return w, nil
 }

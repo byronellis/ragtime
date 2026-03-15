@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,9 +11,19 @@ import (
 	"github.com/byronellis/ragtime/internal/protocol"
 )
 
+// shortSocketPath returns a short path for Unix sockets (macOS has 104-byte limit).
+func shortSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "rt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "t.sock")
+}
+
 func TestDaemonRoundTrip(t *testing.T) {
-	tmpDir := t.TempDir()
-	socketPath := filepath.Join(tmpDir, "test.sock")
+	socketPath := shortSocketPath(t)
 
 	cfg := config.Defaults()
 	cfg.Daemon.Socket = socketPath
@@ -72,8 +83,7 @@ func TestDaemonRoundTrip(t *testing.T) {
 }
 
 func TestDaemonConcurrentConnections(t *testing.T) {
-	tmpDir := t.TempDir()
-	socketPath := filepath.Join(tmpDir, "test.sock")
+	socketPath := shortSocketPath(t)
 
 	cfg := config.Defaults()
 	cfg.Daemon.Socket = socketPath

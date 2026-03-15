@@ -34,15 +34,12 @@ func (h *Handler) handleHookEvent(env *protocol.Envelope) (*protocol.Envelope, e
 		return nil, fmt.Errorf("decode hook event: %w", err)
 	}
 
-	h.daemon.logger.Info("hook event",
-		"agent", event.Agent,
-		"event", event.EventType,
-		"tool", event.ToolName,
-		"session", event.SessionID,
-	)
+	// Publish to event bus (for session tracking, etc.)
+	h.daemon.bus.Publish(&event)
 
-	// For now, return an empty response (no-op)
-	resp := &protocol.HookResponse{}
+	// Evaluate rules
+	resp := h.daemon.engine.Evaluate(&event)
+
 	return protocol.NewEnvelope(protocol.MsgHookResponse, resp)
 }
 
