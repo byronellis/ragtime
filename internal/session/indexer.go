@@ -226,7 +226,8 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 	fmt.Fprintf(&b, "Project: %s (%s)\nAgent: %s | Session: %s | Time: %s\n\n",
 		projectName, hookEvent.CWD, hookEvent.Agent, hookEvent.SessionID, date+" "+timeRange)
 
-	// Collect file reads, writes, edits, commands into meaningful groups
+	// Collect user prompts, file reads, writes, edits, commands into meaningful groups
+	var prompts []string
 	var reads []string
 	var writes []string
 	var edits []string
@@ -239,6 +240,12 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 	seen := make(map[string]bool) // dedup file paths within this batch
 
 	for _, e := range events {
+		// Capture user prompts
+		if e.EventType == "user-prompt-submit" && e.Detail != "" {
+			prompts = append(prompts, e.Detail)
+			continue
+		}
+
 		// Skip post-tool-use — pre-tool-use has the detail we need
 		if e.EventType == "post-tool-use" {
 			continue
@@ -294,7 +301,13 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 		}
 	}
 
-	// Build narrative
+	// Build narrative — user request first, then actions
+	for _, p := range prompts {
+		fmt.Fprintf(&b, "User: %s\n", p)
+	}
+	if len(prompts) > 0 {
+		b.WriteString("\n")
+	}
 	if len(reads) > 0 {
 		b.WriteString("Read: ")
 		b.WriteString(strings.Join(reads, ", "))

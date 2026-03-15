@@ -126,6 +126,14 @@ func TestExtractDetail(t *testing.T) {
 			contains: "explore codebase",
 		},
 		{
+			name: "prompt is captured as detail",
+			event: &protocol.HookEvent{
+				EventType: "user-prompt-submit",
+				Prompt:    "implement the auth middleware",
+			},
+			contains: "implement the auth middleware",
+		},
+		{
 			name: "empty input returns empty",
 			event: &protocol.HookEvent{
 				ToolName:  "Read",

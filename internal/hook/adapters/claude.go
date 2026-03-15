@@ -39,6 +39,7 @@ func ParseClaudeEvent(data []byte, eventType string) (*protocol.HookEvent, error
 		SessionID: raw.SessionID,
 		ToolName:  raw.ToolName,
 		ToolInput: raw.ToolInput,
+		Prompt:    raw.Prompt,
 		CWD:       raw.CWD,
 		Raw:       rawMap,
 	}, nil

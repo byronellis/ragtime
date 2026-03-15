@@ -97,6 +97,15 @@ func (m *Manager) ProcessEvent(event *protocol.HookEvent, resp *protocol.HookRes
 // extractDetail pulls the most relevant info from a hook event's tool input
 // to produce a short, human-readable description of what the tool did.
 func extractDetail(event *protocol.HookEvent) string {
+	// For prompt events, the prompt is the detail
+	if event.Prompt != "" {
+		p := event.Prompt
+		if len(p) > 500 {
+			p = p[:500] + "..."
+		}
+		return p
+	}
+
 	if len(event.ToolInput) == 0 {
 		return ""
 	}

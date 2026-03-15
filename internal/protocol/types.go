@@ -26,6 +26,7 @@ type HookEvent struct {
 	SessionID string            `json:"session_id"`
 	ToolName  string            `json:"tool_name,omitempty"`
 	ToolInput map[string]any    `json:"tool_input,omitempty"`
+	Prompt    string            `json:"prompt,omitempty"`
 	CWD       string            `json:"cwd,omitempty"`
 	Raw       map[string]any    `json:"raw,omitempty"`
 	Mux       *MuxInfo          `json:"mux,omitempty"`
