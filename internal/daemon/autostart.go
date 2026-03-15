@@ -32,19 +32,32 @@ func EnsureRunning(socketPath string) error {
 		return fmt.Errorf("find executable: %w", err)
 	}
 
-	cmd := exec.Command(exe, "daemon")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd := exec.Command(exe, "daemon", "--socket", socketPath)
 	cmd.Stdin = nil
+	cmd.Stdout = nil
+
+	// Log stderr to file for diagnostics
+	logPath := filepath.Join(stateDir, "daemon.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err == nil {
+		cmd.Stderr = logFile
+	}
+
 	// Detach from parent process group
 	cmd.SysProcAttr = daemonSysProcAttr()
 
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		return fmt.Errorf("start daemon: %w", err)
 	}
 
 	// Detach — we don't wait for the daemon process
 	cmd.Process.Release()
+	if logFile != nil {
+		logFile.Close()
+	}
 
 	return waitForSocket(socketPath, 5*time.Second)
 }

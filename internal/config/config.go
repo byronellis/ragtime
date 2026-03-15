@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/byronellis/ragtime/internal/project"
 	"gopkg.in/yaml.v3"
@@ -92,7 +93,12 @@ func Defaults() *Config {
 }
 
 // Load reads the global config, merges any per-project overrides, and returns the result.
+// If cwd is empty, it defaults to the current working directory.
 func Load(cwd string) (*Config, error) {
+	if cwd == "" {
+		cwd = "."
+	}
+
 	cfg := Defaults()
 
 	// Load global config
@@ -111,7 +117,22 @@ func Load(cwd string) (*Config, error) {
 		}
 	}
 
+	// Expand ~ in paths after all config sources are merged
+	cfg.Daemon.Socket = expandHome(cfg.Daemon.Socket)
+
 	return cfg, nil
+}
+
+// expandHome replaces a leading ~ with the user's home directory.
+func expandHome(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, path[1:])
 }
 
 func mergeFromFile(cfg *Config, path string) error {

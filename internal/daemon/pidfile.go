@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // writePIDFile writes the current process ID to the given path.
@@ -33,10 +34,7 @@ func IsRunning(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// On Unix, FindProcess always succeeds. Send signal 0 to check if alive.
-	return proc.Signal(nil) == nil
+	// Use syscall.Kill with signal 0 to probe process existence.
+	// os.Process.Signal(nil) does NOT work — it returns "unsupported signal type".
+	return syscall.Kill(pid, 0) == nil
 }

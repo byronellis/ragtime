@@ -88,6 +88,26 @@ func (s *Session) EventCount() int {
 	return len(s.Events)
 }
 
+// EventsRange returns a copy of events in the range [from, to), clamped to bounds.
+func (s *Session) EventsRange(from, to int) []Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if from < 0 {
+		from = 0
+	}
+	if to > len(s.Events) {
+		to = len(s.Events)
+	}
+	if from >= to {
+		return nil
+	}
+
+	result := make([]Event, to-from)
+	copy(result, s.Events[from:to])
+	return result
+}
+
 // RecentEvents returns the last n events.
 func (s *Session) RecentEvents(n int) []Event {
 	s.mu.Lock()

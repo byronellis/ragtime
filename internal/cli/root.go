@@ -24,6 +24,10 @@ func NewRootCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newDaemonCmd(),
+		newStartCmd(),
+		newStopCmd(),
+		newRestartCmd(),
+		newStatusCmd(),
 		newHookCmd(),
 		newSearchCmd(),
 		newIndexCmd(),

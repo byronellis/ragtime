@@ -13,6 +13,7 @@ import (
 	"github.com/byronellis/ragtime/internal/config"
 	"github.com/byronellis/ragtime/internal/hook"
 	"github.com/byronellis/ragtime/internal/project"
+	"github.com/byronellis/ragtime/internal/protocol"
 	"github.com/byronellis/ragtime/internal/rag"
 	"github.com/byronellis/ragtime/internal/rag/providers"
 	"github.com/byronellis/ragtime/internal/session"
@@ -24,6 +25,7 @@ type Daemon struct {
 	socket   *SocketServer
 	engine   *hook.Engine
 	sessions *session.Manager
+	indexer  *session.SessionIndexer
 	bus      *bus.Bus
 	logger   *slog.Logger
 }
@@ -51,6 +53,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return fmt.Errorf("create state dir: %w", err)
 	}
 
+	// Acquire exclusive lock to prevent multiple daemons
+	lockPath := filepath.Join(stateDir, "daemon.lock")
+	lock, err := acquireLock(lockPath)
+	if err != nil {
+		return err
+	}
+	defer lock.release()
+
 	// Write PID file
 	pidPath := filepath.Join(stateDir, "daemon.pid")
 	if err := writePIDFile(pidPath); err != nil {
@@ -67,6 +77,24 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if ragEngine != nil {
 		d.engine.SetRAG(ragEngine)
 	}
+
+	// Start session indexer for background RAG indexing
+	indexerProvider := providers.NewOllama(d.cfg.Embeddings.Endpoint, d.cfg.Embeddings.Model)
+	d.indexer = session.NewSessionIndexer(indexerProvider, d.logger)
+	d.indexer.Start()
+	defer d.indexer.Stop()
+
+	// Subscribe to bus for session indexing
+	d.bus.Subscribe(func(event *protocol.HookEvent) {
+		if event.SessionID == "" {
+			return
+		}
+		sess := d.sessions.Get(event.Agent, event.SessionID)
+		if sess == nil {
+			return
+		}
+		d.indexer.OnEvent(event, sess)
+	})
 
 	// Start config watcher for hot reload
 	watcher, err := d.startWatcher()
