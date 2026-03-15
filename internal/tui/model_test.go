@@ -221,8 +221,8 @@ func TestModelTrackSession(t *testing.T) {
 	updated, _ := m.Update(EventMsg{Event: event})
 	m = updated.(Model)
 
-	if len(m.sessions) != 1 {
-		t.Errorf("sessions = %d, want 1", len(m.sessions))
+	if m.sessionsPanel.Count() != 1 {
+		t.Errorf("sessions = %d, want 1", m.sessionsPanel.Count())
 	}
 	if m.statusBar.project != "myproject" {
 		t.Errorf("project = %q, want %q", m.statusBar.project, "myproject")
@@ -231,8 +231,8 @@ func TestModelTrackSession(t *testing.T) {
 	// Same session again shouldn't increase count
 	updated, _ = m.Update(EventMsg{Event: event})
 	m = updated.(Model)
-	if len(m.sessions) != 1 {
-		t.Errorf("sessions after dup = %d, want 1", len(m.sessions))
+	if m.sessionsPanel.Count() != 1 {
+		t.Errorf("sessions after dup = %d, want 1", m.sessionsPanel.Count())
 	}
 
 	// Different session
@@ -244,8 +244,8 @@ func TestModelTrackSession(t *testing.T) {
 	}
 	updated, _ = m.Update(EventMsg{Event: event2})
 	m = updated.(Model)
-	if len(m.sessions) != 2 {
-		t.Errorf("sessions after new = %d, want 2", len(m.sessions))
+	if m.sessionsPanel.Count() != 2 {
+		t.Errorf("sessions after new = %d, want 2", m.sessionsPanel.Count())
 	}
 }
 
@@ -260,7 +260,63 @@ func TestModelTrackSessionNilEvent(t *testing.T) {
 	// Should not panic
 	updated, _ := m.Update(EventMsg{Event: event})
 	m = updated.(Model)
-	if len(m.sessions) != 0 {
-		t.Errorf("sessions = %d, want 0", len(m.sessions))
+	if m.sessionsPanel.Count() != 0 {
+		t.Errorf("sessions = %d, want 0", m.sessionsPanel.Count())
+	}
+}
+
+func TestModelSessionsPanelHeight(t *testing.T) {
+	m := testModel()
+	m.height = 40
+
+	// No sessions = no panel
+	if h := m.sessionsPanelHeight(); h != 0 {
+		t.Errorf("sessionsPanelHeight with 0 sessions = %d, want 0", h)
+	}
+
+	// Add a session
+	m.sessionsPanel.Update(protocol.StreamEvent{
+		Kind:      "hook_event",
+		Timestamp: time.Now(),
+		Event: &protocol.HookEvent{
+			Agent: "claude", SessionID: "s1", EventType: "pre-tool-use",
+		},
+	})
+
+	// 1 session = header + 1 row = 2
+	if h := m.sessionsPanelHeight(); h != 2 {
+		t.Errorf("sessionsPanelHeight with 1 session = %d, want 2", h)
+	}
+}
+
+func TestModelViewWithSessions(t *testing.T) {
+	m := testModel()
+	m.width = 80
+	m.height = 30
+
+	// Add a session via event
+	event := protocol.StreamEvent{
+		Kind:      "hook_event",
+		Timestamp: time.Now(),
+		Event: &protocol.HookEvent{
+			Agent:     "claude",
+			SessionID: "test-sess",
+			EventType: "pre-tool-use",
+			ToolName:  "Read",
+			CWD:       "/home/user/myapp",
+		},
+	}
+	updated, _ := m.Update(EventMsg{Event: event})
+	m = updated.(Model)
+	// Trigger layout recalc
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = updated.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "claude") {
+		t.Error("view should show agent name in session panel")
+	}
+	if !strings.Contains(view, "AGENT") {
+		t.Error("view should show session panel header")
 	}
 }

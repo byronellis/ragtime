@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/byronellis/ragtime/internal/protocol"
 )
@@ -42,6 +43,27 @@ func (h *Handler) handleHookEvent(env *protocol.Envelope) (*protocol.Envelope, e
 
 	// Process through session manager (dedup, history tracking)
 	resp = h.daemon.sessions.ProcessEvent(&event, resp)
+
+	// Broadcast session update to TUI subscribers
+	if event.SessionID != "" && h.daemon.subs != nil {
+		sess := h.daemon.sessions.Get(event.Agent, event.SessionID)
+		if sess != nil {
+			info := protocol.SessionInfo{
+				Agent:      sess.Agent,
+				SessionID:  sess.SessionID,
+				StartedAt:  sess.StartedAt,
+				EventCount: sess.EventCount(),
+			}
+			if recent := sess.RecentEvents(1); len(recent) > 0 {
+				info.LastEvent = recent[0].Timestamp
+			}
+			h.daemon.subs.Broadcast(&protocol.StreamEvent{
+				Kind:      "session_update",
+				Timestamp: time.Now(),
+				Session:   &info,
+			})
+		}
+	}
 
 	return protocol.NewEnvelope(protocol.MsgHookResponse, resp)
 }

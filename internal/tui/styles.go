@@ -77,6 +77,28 @@ var (
 				Foreground(colorDim).
 				Width(4)
 
+	// Sessions panel
+	sessionPanelStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.NormalBorder()).
+				BorderBottom(true).
+				BorderForeground(lipgloss.Color("#504945"))
+
+	sessionHeaderStyle = lipgloss.NewStyle().
+				Foreground(colorDim).
+				Bold(true)
+
+	sessionAgentStyle = lipgloss.NewStyle().
+				Foreground(colorCyan)
+
+	sessionIDStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
+
+	sessionProjectStyle = lipgloss.NewStyle().
+				Foreground(colorBlue)
+
+	sessionAgoStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
+
 	// Title
 	titleStyle = lipgloss.NewStyle().
 			Foreground(colorBlue).
