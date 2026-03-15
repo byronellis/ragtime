@@ -126,16 +126,23 @@ func (f EventFeed) renderEvent(event protocol.StreamEvent) string {
 
 	ts := eventTimeStyle.Render(event.Timestamp.Local().Format("15:04:05"))
 
+	// Event type tag — distinguish pre/post/prompt/stop/etc
+	tag := eventTag(e.EventType)
+
+	// Tool or event kind
 	tool := e.ToolName
 	if tool == "" {
-		tool = e.EventType
+		tool = ""
 	}
 	toolStr := eventToolStyle.Render(tool)
 
-	detail := shortDetail(e)
-	// Truncate detail to fit width (leave room for time, tool, decision, spacing)
-	maxDetail := f.width - 8 - 8 - 8 - 4 // rough estimate
-	if maxDetail < 0 {
+	// Detail content
+	detail := eventDetail(e)
+
+	// Truncate detail to fit width
+	// time(8) + tag(6) + tool(8) + spaces(4) = ~26 chars overhead
+	maxDetail := f.width - 26
+	if maxDetail < 20 {
 		maxDetail = 20
 	}
 	if len(detail) > maxDetail {
@@ -143,25 +150,77 @@ func (f EventFeed) renderEvent(event protocol.StreamEvent) string {
 	}
 	detailStr := eventDetailStyle.Render(detail)
 
-	var decStr string
-	switch e.EventType {
-	case "tool_use":
-		// No decision to show for pre-hook events
-	default:
-		// Show decision if any is present in the event
+	if tool == "" {
+		return fmt.Sprintf("%s %s %s", ts, tag, detailStr)
 	}
-
-	// For the event feed, we show the event type styling based on what happened
-	line := fmt.Sprintf("%s %s %s", ts, toolStr, detailStr)
-	if decStr != "" {
-		line += " " + decStr
-	}
-
-	return line
+	return fmt.Sprintf("%s %s %s %s", ts, tag, toolStr, detailStr)
 }
 
-// shortDetail extracts a compact detail string from a hook event.
-func shortDetail(e *protocol.HookEvent) string {
+// eventTag returns a styled short label for the event type.
+func eventTag(eventType string) string {
+	switch eventType {
+	case "pre-tool-use":
+		return eventTagPreStyle.Render("PRE")
+	case "post-tool-use":
+		return eventTagPostStyle.Render("POST")
+	case "user-prompt-submit":
+		return eventTagPromptStyle.Render("USR")
+	case "stop":
+		return eventTagStopStyle.Render("STOP")
+	case "notification":
+		return eventTagNotifyStyle.Render("NOTE")
+	case "session-start":
+		return eventTagSessionStyle.Render("SESS")
+	case "subagent-stop":
+		return eventTagPostStyle.Render("SUB")
+	default:
+		return eventTagDimStyle.Render(strings.ToUpper(eventType))
+	}
+}
+
+// eventDetail extracts a compact detail string from a hook event.
+func eventDetail(e *protocol.HookEvent) string {
+	switch e.EventType {
+	case "user-prompt-submit":
+		if e.Prompt != "" {
+			p := e.Prompt
+			if len(p) > 120 {
+				p = p[:120] + "..."
+			}
+			return p
+		}
+		return ""
+	case "stop":
+		if e.Response != "" {
+			r := e.Response
+			// Show first line or first 120 chars of agent response
+			if idx := strings.IndexByte(r, '\n'); idx > 0 && idx < 120 {
+				r = r[:idx]
+			} else if len(r) > 120 {
+				r = r[:120] + "..."
+			}
+			return r
+		}
+		return "turn complete"
+	case "notification":
+		if e.Response != "" {
+			r := e.Response
+			if len(r) > 120 {
+				r = r[:120] + "..."
+			}
+			return r
+		}
+		return ""
+	case "session-start":
+		return shortSessionID(e.SessionID)
+	}
+
+	// Tool events
+	return shortToolDetail(e)
+}
+
+// shortToolDetail extracts a compact detail string from tool events.
+func shortToolDetail(e *protocol.HookEvent) string {
 	if e.Prompt != "" {
 		p := e.Prompt
 		if len(p) > 80 {
@@ -221,4 +280,11 @@ func shortPath(path string) string {
 		return path
 	}
 	return strings.Join(parts[len(parts)-3:], "/")
+}
+
+func shortSessionID(id string) string {
+	if len(id) > 12 {
+		return id[:12] + "..."
+	}
+	return id
 }

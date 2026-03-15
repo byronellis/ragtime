@@ -15,6 +15,9 @@ type ClaudeRawEvent struct {
 	ToolInput      map[string]any `json:"tool_input,omitempty"`
 	ToolResponse   any            `json:"tool_response,omitempty"`
 	Prompt         string         `json:"prompt,omitempty"`
+	Response       string         `json:"response,omitempty"`
+	Message        string         `json:"message,omitempty"`
+	StopReason     string         `json:"stop_reason,omitempty"`
 	Source         string         `json:"source,omitempty"`
 	PermissionMode string         `json:"permission_mode,omitempty"`
 	HookEventName  string         `json:"hook_event_name,omitempty"`
@@ -33,7 +36,7 @@ func ParseClaudeEvent(data []byte, eventType string) (*protocol.HookEvent, error
 	var rawMap map[string]any
 	json.Unmarshal(data, &rawMap)
 
-	return &protocol.HookEvent{
+	event := &protocol.HookEvent{
 		Agent:     "claude",
 		EventType: eventType,
 		SessionID: raw.SessionID,
@@ -42,7 +45,26 @@ func ParseClaudeEvent(data []byte, eventType string) (*protocol.HookEvent, error
 		Prompt:    raw.Prompt,
 		CWD:       raw.CWD,
 		Raw:       rawMap,
-	}, nil
+	}
+
+	// Extract agent response text from stop/notification events
+	switch eventType {
+	case "stop":
+		event.Response = raw.Response
+		// Fall back to checking raw map if typed field is empty
+		if event.Response == "" {
+			event.Response = rawString(rawMap, "response")
+		}
+	case "notification":
+		event.Response = raw.Message
+		if event.Response == "" {
+			event.Response = rawString(rawMap, "message")
+		}
+	case "post-tool-use":
+		event.ToolResponse = stringifyToolResponse(raw.ToolResponse)
+	}
+
+	return event, nil
 }
 
 // ClaudePreToolUseResponse formats a HookResponse as Claude Code PreToolUse JSON output.
@@ -117,4 +139,38 @@ func FormatClaudeResponse(resp *protocol.HookResponse, eventType string) map[str
 		}
 		return map[string]any{}
 	}
+}
+
+// rawString extracts a string value from a raw map, returning "" if missing or wrong type.
+func rawString(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+// stringifyToolResponse converts a tool_response value to a string for storage.
+// Claude Code sends this as a string or structured object.
+func stringifyToolResponse(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	s := string(data)
+	// Don't store huge tool responses (e.g. full file contents)
+	if len(s) > 2000 {
+		return s[:2000] + "..."
+	}
+	return s
 }

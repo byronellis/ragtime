@@ -8,6 +8,8 @@ var (
 	colorRed    = lipgloss.Color("#ff5f87")
 	colorYellow = lipgloss.Color("#ffff87")
 	colorBlue   = lipgloss.Color("#87afff")
+	colorCyan   = lipgloss.Color("#87ffff")
+	colorPurple = lipgloss.Color("#d787ff")
 	colorDim    = lipgloss.Color("#626262")
 	colorWhite  = lipgloss.Color("#ffffff")
 
@@ -44,14 +46,36 @@ var (
 	eventDetailStyle = lipgloss.NewStyle().
 				Foreground(colorWhite)
 
-	eventDecisionAllow = lipgloss.NewStyle().
-				Foreground(colorGreen)
+	// Event type tags — fixed width for alignment
+	eventTagPreStyle = lipgloss.NewStyle().
+				Foreground(colorDim).
+				Width(4)
 
-	eventDecisionDeny = lipgloss.NewStyle().
-				Foreground(colorRed)
+	eventTagPostStyle = lipgloss.NewStyle().
+				Foreground(colorDim).
+				Width(4)
 
-	eventDecisionAsk = lipgloss.NewStyle().
-				Foreground(colorYellow)
+	eventTagPromptStyle = lipgloss.NewStyle().
+				Foreground(colorCyan).
+				Bold(true).
+				Width(4)
+
+	eventTagStopStyle = lipgloss.NewStyle().
+				Foreground(colorPurple).
+				Bold(true).
+				Width(4)
+
+	eventTagNotifyStyle = lipgloss.NewStyle().
+				Foreground(colorYellow).
+				Width(4)
+
+	eventTagSessionStyle = lipgloss.NewStyle().
+				Foreground(colorGreen).
+				Width(4)
+
+	eventTagDimStyle = lipgloss.NewStyle().
+				Foreground(colorDim).
+				Width(4)
 
 	// Title
 	titleStyle = lipgloss.NewStyle().

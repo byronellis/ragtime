@@ -9,12 +9,13 @@ import (
 
 // Event records a hook event in session history.
 type Event struct {
-	Timestamp   time.Time                    `json:"timestamp"`
-	EventType   string                       `json:"event_type"`
-	ToolName    string                       `json:"tool_name,omitempty"`
-	Detail      string                       `json:"detail,omitempty"`
-	HasContext  bool                         `json:"has_context,omitempty"`
-	Decision    protocol.PermissionDecision  `json:"decision,omitempty"`
+	Timestamp    time.Time                    `json:"timestamp"`
+	EventType    string                       `json:"event_type"`
+	ToolName     string                       `json:"tool_name,omitempty"`
+	Detail       string                       `json:"detail,omitempty"`
+	Response     string                       `json:"response,omitempty"`
+	HasContext   bool                         `json:"has_context,omitempty"`
+	Decision     protocol.PermissionDecision  `json:"decision,omitempty"`
 }
 
 // Session tracks state for a single agent conversation.
@@ -40,7 +41,7 @@ func NewSession(agent, sessionID string) *Session {
 }
 
 // RecordEvent adds an event to the session history.
-func (s *Session) RecordEvent(eventType, toolName, detail string, hasContext bool, decision protocol.PermissionDecision) {
+func (s *Session) RecordEvent(eventType, toolName, detail, response string, hasContext bool, decision protocol.PermissionDecision) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -49,6 +50,7 @@ func (s *Session) RecordEvent(eventType, toolName, detail string, hasContext boo
 		EventType:  eventType,
 		ToolName:   toolName,
 		Detail:     detail,
+		Response:   response,
 		HasContext: hasContext,
 		Decision:   decision,
 	})

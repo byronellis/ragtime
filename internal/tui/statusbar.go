@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,8 +13,10 @@ import (
 
 // StatusBar renders the top status line.
 type StatusBar struct {
-	info  protocol.DaemonInfo
-	width int
+	info     protocol.DaemonInfo
+	sessions int
+	project  string // last seen CWD project name
+	width    int
 }
 
 // NewStatusBar creates a status bar from daemon info.
@@ -26,6 +29,19 @@ func (s *StatusBar) SetWidth(w int) {
 	s.width = w
 }
 
+// SetSessions updates the session count.
+func (s *StatusBar) SetSessions(n int) {
+	s.sessions = n
+}
+
+// SetProject updates the project name from a CWD path.
+func (s *StatusBar) SetProject(cwd string) {
+	if cwd == "" {
+		return
+	}
+	s.project = filepath.Base(cwd)
+}
+
 // View renders the status bar.
 func (s StatusBar) View() string {
 	dot := statusDotStyle.Render("\u25cf")
@@ -34,8 +50,14 @@ func (s StatusBar) View() string {
 	pid := statusLabelStyle.Render("pid:") + fmt.Sprintf("%d", s.info.PID)
 	uptime := statusLabelStyle.Render("up:") + formatDuration(time.Since(s.info.StartedAt))
 	rules := statusLabelStyle.Render("rules:") + fmt.Sprintf("%d", s.info.RuleCount)
+	sess := statusLabelStyle.Render("sessions:") + fmt.Sprintf("%d", s.sessions)
 
-	content := fmt.Sprintf("%s %s  %s  %s  %s", title, dot, pid, uptime, rules)
+	content := fmt.Sprintf("%s %s  %s  %s  %s  %s", title, dot, pid, uptime, rules, sess)
+
+	if s.project != "" {
+		proj := statusLabelStyle.Render("project:") + s.project
+		content += "  " + proj
+	}
 
 	return statusBarStyle.Width(s.width).Render(content)
 }

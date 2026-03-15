@@ -242,6 +242,7 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 
 	// Collect user prompts, file reads, writes, edits, commands into meaningful groups
 	var prompts []string
+	var responses []string
 	var reads []string
 	var writes []string
 	var edits []string
@@ -257,6 +258,16 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 		// Capture user prompts
 		if e.EventType == "user-prompt-submit" && e.Detail != "" {
 			prompts = append(prompts, e.Detail)
+			continue
+		}
+
+		// Capture agent responses from stop events
+		if e.EventType == "stop" && e.Response != "" {
+			resp := e.Response
+			if len(resp) > 2000 {
+				resp = resp[:2000] + "..."
+			}
+			responses = append(responses, resp)
 			continue
 		}
 
@@ -315,11 +326,17 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 		}
 	}
 
-	// Build narrative — user request first, then actions
+	// Build narrative — user request first, then agent response, then actions
 	for _, p := range prompts {
 		fmt.Fprintf(&b, "User: %s\n", p)
 	}
 	if len(prompts) > 0 {
+		b.WriteString("\n")
+	}
+	for _, r := range responses {
+		fmt.Fprintf(&b, "Agent: %s\n", r)
+	}
+	if len(responses) > 0 {
 		b.WriteString("\n")
 	}
 	if len(reads) > 0 {

@@ -235,9 +235,9 @@ func TestShortDetail(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shortDetail(tt.event)
+			got := shortToolDetail(tt.event)
 			if tt.contains != "" && !strings.Contains(got, tt.contains) {
-				t.Errorf("shortDetail() = %q, want it to contain %q", got, tt.contains)
+				t.Errorf("shortToolDetail() = %q, want it to contain %q", got, tt.contains)
 			}
 		})
 	}
@@ -246,7 +246,7 @@ func TestShortDetail(t *testing.T) {
 func TestShortDetailLongPrompt(t *testing.T) {
 	long := strings.Repeat("a", 200)
 	event := &protocol.HookEvent{Prompt: long}
-	got := shortDetail(event)
+	got := shortToolDetail(event)
 	if len(got) > 100 {
 		t.Errorf("long prompt should be truncated, got len=%d", len(got))
 	}
@@ -320,7 +320,7 @@ func TestShortDetailLongBash(t *testing.T) {
 		ToolName:  "Bash",
 		ToolInput: map[string]any{"command": cmd},
 	}
-	got := shortDetail(event)
+	got := shortToolDetail(event)
 	if len(got) > 100 {
 		t.Errorf("long bash should be truncated, got len=%d", len(got))
 	}
@@ -331,10 +331,10 @@ func TestShortDetailWebSearch(t *testing.T) {
 		ToolName:  "WebSearch",
 		ToolInput: map[string]any{"query": "golang testing"},
 	}
-	got := shortDetail(event)
+	got := shortToolDetail(event)
 	// WebSearch falls through to the default case
 	if !strings.Contains(got, "golang testing") {
-		t.Errorf("shortDetail(WebSearch) = %q, want to contain 'golang testing'", got)
+		t.Errorf("shortToolDetail(WebSearch) = %q, want to contain 'golang testing'", got)
 	}
 }
 
@@ -352,5 +352,101 @@ func TestStrField(t *testing.T) {
 	}
 	if got := strField(m, "missing"); got != "" {
 		t.Errorf("strField(missing) = %q, want empty", got)
+	}
+}
+
+func TestEventTag(t *testing.T) {
+	tests := []struct {
+		eventType string
+		contains  string
+	}{
+		{"pre-tool-use", "PRE"},
+		{"post-tool-use", "POST"},
+		{"user-prompt-submit", "USR"},
+		{"stop", "STOP"},
+		{"notification", "NOTE"},
+		{"session-start", "SESS"},
+		{"subagent-stop", "SUB"},
+		{"unknown", "UNKN"},
+	}
+
+	for _, tt := range tests {
+		got := eventTag(tt.eventType)
+		if !strings.Contains(got, tt.contains) {
+			t.Errorf("eventTag(%q) = %q, want it to contain %q", tt.eventType, got, tt.contains)
+		}
+	}
+}
+
+func TestEventDetailStopWithResponse(t *testing.T) {
+	e := &protocol.HookEvent{
+		EventType: "stop",
+		Response:  "I've completed the task. Here's what I did...",
+	}
+	got := eventDetail(e)
+	if !strings.Contains(got, "completed the task") {
+		t.Errorf("eventDetail(stop) = %q, want agent response", got)
+	}
+}
+
+func TestEventDetailStopNoResponse(t *testing.T) {
+	e := &protocol.HookEvent{EventType: "stop"}
+	got := eventDetail(e)
+	if got != "turn complete" {
+		t.Errorf("eventDetail(stop) = %q, want 'turn complete'", got)
+	}
+}
+
+func TestEventDetailPrompt(t *testing.T) {
+	e := &protocol.HookEvent{
+		EventType: "user-prompt-submit",
+		Prompt:    "fix the bug in main.go",
+	}
+	got := eventDetail(e)
+	if !strings.Contains(got, "fix the bug") {
+		t.Errorf("eventDetail(prompt) = %q, want prompt text", got)
+	}
+}
+
+func TestEventDetailNotification(t *testing.T) {
+	e := &protocol.HookEvent{
+		EventType: "notification",
+		Response:  "Build succeeded",
+	}
+	got := eventDetail(e)
+	if got != "Build succeeded" {
+		t.Errorf("eventDetail(notification) = %q, want notification text", got)
+	}
+}
+
+func TestEventDetailSessionStart(t *testing.T) {
+	e := &protocol.HookEvent{
+		EventType: "session-start",
+		SessionID: "abcdef123456789",
+	}
+	got := eventDetail(e)
+	if !strings.Contains(got, "abcdef123456") {
+		t.Errorf("eventDetail(session-start) = %q, want truncated session ID", got)
+	}
+}
+
+func TestEventDetailStopLongResponse(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	e := &protocol.HookEvent{
+		EventType: "stop",
+		Response:  long,
+	}
+	got := eventDetail(e)
+	if len(got) > 130 {
+		t.Errorf("long response should be truncated, got len=%d", len(got))
+	}
+}
+
+func TestShortSessionID(t *testing.T) {
+	if got := shortSessionID("short"); got != "short" {
+		t.Errorf("shortSessionID(short) = %q", got)
+	}
+	if got := shortSessionID("abcdef123456789xyz"); !strings.HasSuffix(got, "...") {
+		t.Errorf("shortSessionID(long) = %q, want truncated", got)
 	}
 }

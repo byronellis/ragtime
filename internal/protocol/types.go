@@ -24,15 +24,17 @@ type Envelope struct {
 
 // HookEvent is the universal hook event model, normalized across agent platforms.
 type HookEvent struct {
-	Agent     string            `json:"agent"`
-	EventType string            `json:"event_type"`
-	SessionID string            `json:"session_id"`
-	ToolName  string            `json:"tool_name,omitempty"`
-	ToolInput map[string]any    `json:"tool_input,omitempty"`
-	Prompt    string            `json:"prompt,omitempty"`
-	CWD       string            `json:"cwd,omitempty"`
-	Raw       map[string]any    `json:"raw,omitempty"`
-	Mux       *MuxInfo          `json:"mux,omitempty"`
+	Agent        string            `json:"agent"`
+	EventType    string            `json:"event_type"`
+	SessionID    string            `json:"session_id"`
+	ToolName     string            `json:"tool_name,omitempty"`
+	ToolInput    map[string]any    `json:"tool_input,omitempty"`
+	ToolResponse string            `json:"tool_response,omitempty"`
+	Prompt       string            `json:"prompt,omitempty"`
+	Response     string            `json:"response,omitempty"`
+	CWD          string            `json:"cwd,omitempty"`
+	Raw          map[string]any    `json:"raw,omitempty"`
+	Mux          *MuxInfo          `json:"mux,omitempty"`
 }
 
 // MuxInfo describes the detected terminal multiplexer environment.

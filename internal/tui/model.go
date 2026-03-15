@@ -8,32 +8,33 @@ import (
 
 // Model is the top-level Bubble Tea model for the TUI dashboard.
 type Model struct {
-	client       *Client
-	statusBar    StatusBar
-	eventFeed    EventFeed
-	helpBar      HelpBar
-	connected    bool
+	client        *Client
+	statusBar     StatusBar
+	eventFeed     EventFeed
+	helpBar       HelpBar
+	connected     bool
 	disconnectErr error
-	width        int
-	height       int
+	sessions      map[string]bool // track unique "agent:session" keys
+	width         int
+	height        int
 }
 
 // NewModel creates the TUI model from an established client connection.
 func NewModel(client *Client, info *protocol.SubscribeResponse) Model {
+	sb := NewStatusBar(info.DaemonInfo)
+	sb.SetSessions(len(info.Sessions))
 	return Model{
 		client:    client,
-		statusBar: NewStatusBar(info.DaemonInfo),
+		statusBar: sb,
 		eventFeed: NewEventFeed(),
 		connected: true,
+		sessions:  make(map[string]bool),
 	}
 }
 
 // Init starts the event read loop.
 func (m Model) Init() tea.Cmd {
 	return func() tea.Msg {
-		// Start the read loop in a goroutine — it will send messages
-		// via the program reference, but we need a different approach.
-		// We return nil here and start the read loop from Run().
 		return nil
 	}
 }
@@ -68,6 +69,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EventMsg:
 		m.eventFeed.Push(msg.Event)
+		m.trackSession(msg.Event)
 
 	case DisconnectedMsg:
 		m.connected = false
@@ -75,6 +77,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// trackSession updates session count and project from incoming events.
+func (m *Model) trackSession(event protocol.StreamEvent) {
+	if event.Event == nil {
+		return
+	}
+	e := event.Event
+	if e.SessionID != "" {
+		key := e.Agent + ":" + e.SessionID
+		if !m.sessions[key] {
+			m.sessions[key] = true
+			m.statusBar.SetSessions(len(m.sessions))
+		}
+	}
+	if e.CWD != "" {
+		m.statusBar.SetProject(e.CWD)
+	}
 }
 
 // View renders the full TUI.

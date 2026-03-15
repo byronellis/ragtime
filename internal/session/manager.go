@@ -88,8 +88,14 @@ func (m *Manager) ProcessEvent(event *protocol.HookEvent, resp *protocol.HookRes
 	// Extract a meaningful detail string from tool input
 	detail := extractDetail(event)
 
+	// Determine response text to record
+	response := event.Response
+	if response == "" && event.ToolResponse != "" {
+		response = event.ToolResponse
+	}
+
 	// Record the event
-	session.RecordEvent(event.EventType, event.ToolName, detail, resp.Context != "", resp.PermissionDecision)
+	session.RecordEvent(event.EventType, event.ToolName, detail, response, resp.Context != "", resp.PermissionDecision)
 
 	return resp
 }

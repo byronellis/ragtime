@@ -202,3 +202,65 @@ func TestModelInit(t *testing.T) {
 		t.Fatal("Init should return a cmd")
 	}
 }
+
+func TestModelTrackSession(t *testing.T) {
+	m := testModel()
+
+	event := protocol.StreamEvent{
+		Kind:      "hook_event",
+		Timestamp: time.Now(),
+		Event: &protocol.HookEvent{
+			Agent:     "claude",
+			SessionID: "sess-123",
+			EventType: "pre-tool-use",
+			ToolName:  "Read",
+			CWD:       "/Users/test/myproject",
+		},
+	}
+
+	updated, _ := m.Update(EventMsg{Event: event})
+	m = updated.(Model)
+
+	if len(m.sessions) != 1 {
+		t.Errorf("sessions = %d, want 1", len(m.sessions))
+	}
+	if m.statusBar.project != "myproject" {
+		t.Errorf("project = %q, want %q", m.statusBar.project, "myproject")
+	}
+
+	// Same session again shouldn't increase count
+	updated, _ = m.Update(EventMsg{Event: event})
+	m = updated.(Model)
+	if len(m.sessions) != 1 {
+		t.Errorf("sessions after dup = %d, want 1", len(m.sessions))
+	}
+
+	// Different session
+	event2 := event
+	event2.Event = &protocol.HookEvent{
+		Agent:     "claude",
+		SessionID: "sess-456",
+		EventType: "pre-tool-use",
+	}
+	updated, _ = m.Update(EventMsg{Event: event2})
+	m = updated.(Model)
+	if len(m.sessions) != 2 {
+		t.Errorf("sessions after new = %d, want 2", len(m.sessions))
+	}
+}
+
+func TestModelTrackSessionNilEvent(t *testing.T) {
+	m := testModel()
+	event := protocol.StreamEvent{
+		Kind:      "session_update",
+		Timestamp: time.Now(),
+		Event:     nil,
+	}
+
+	// Should not panic
+	updated, _ := m.Update(EventMsg{Event: event})
+	m = updated.(Model)
+	if len(m.sessions) != 0 {
+		t.Errorf("sessions = %d, want 0", len(m.sessions))
+	}
+}
