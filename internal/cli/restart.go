@@ -45,16 +45,7 @@ func newStopCmd() *cobra.Command {
 			socketPath := resolveSocket()
 
 			pid, running := daemon.Status(socketPath)
-			if !running {
-				// Even if Status says not running, try to clean up by PID file
-				if pid > 0 && daemon.IsRunning(pid) {
-					fmt.Fprintf(cmd.OutOrStdout(), "Stopping daemon (pid %d)...\n", pid)
-					if err := daemon.Stop(socketPath); err != nil {
-						return err
-					}
-					fmt.Fprintln(cmd.OutOrStdout(), "Daemon stopped")
-					return nil
-				}
+			if !running && !(pid > 0 && daemon.IsRunning(pid)) {
 				fmt.Fprintln(cmd.OutOrStdout(), "Daemon not running")
 				return nil
 			}

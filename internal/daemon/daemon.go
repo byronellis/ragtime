@@ -35,7 +35,7 @@ func New(cfg *config.Config) *Daemon {
 	logger := slog.Default()
 	return &Daemon{
 		cfg:      cfg,
-		engine:   hook.NewEngine(cfg.Rules, logger),
+		engine:   hook.NewEngine(nil, logger),
 		sessions: session.NewManager(logger),
 		bus:      bus.New(),
 		logger:   logger,

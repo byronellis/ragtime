@@ -41,6 +41,7 @@ type SessionIndexer struct {
 	lastIndexed map[string]int // "agent:sessionID" -> last indexed event index
 	queue       chan indexRequest
 	done        chan struct{}
+	col         *rag.Collection // cached collection handle, opened lazily
 }
 
 // NewSessionIndexer creates a new indexer.
@@ -165,26 +166,10 @@ func (idx *SessionIndexer) processRequest(req indexRequest) {
 		return
 	}
 
-	// Open or create the global sessions collection
-	globalDir := project.GlobalDir()
-	if globalDir == "" {
-		idx.logger.Error("session indexer: no global dir")
-		return
-	}
-
-	colDir := filepath.Join(globalDir, "indexes", "sessions")
-	col, err := rag.OpenCollection(colDir)
+	col, err := idx.getCollection()
 	if err != nil {
-		meta := rag.CollectionMeta{
-			Name:       "sessions",
-			Provider:   "ollama",
-			Dimensions: idx.provider.Dimensions(),
-		}
-		col, err = rag.CreateCollection(colDir, meta)
-		if err != nil {
-			idx.logger.Error("session indexer: create collection failed", "error", err)
-			return
-		}
+		idx.logger.Error("session indexer: open collection", "error", err)
+		return
 	}
 
 	if err := col.AppendChunksAndVectors(chunks, vecs); err != nil {
@@ -202,6 +187,35 @@ func (idx *SessionIndexer) processRequest(req indexRequest) {
 	if req.event.CWD != "" {
 		idx.writeProjectRef(req.event.CWD, req.event.Agent, req.event.SessionID)
 	}
+}
+
+// getCollection returns the cached sessions collection, opening or creating it on first use.
+func (idx *SessionIndexer) getCollection() (*rag.Collection, error) {
+	if idx.col != nil {
+		return idx.col, nil
+	}
+
+	globalDir := project.GlobalDir()
+	if globalDir == "" {
+		return nil, fmt.Errorf("no global dir")
+	}
+
+	colDir := filepath.Join(globalDir, "indexes", "sessions")
+	col, err := rag.OpenCollection(colDir)
+	if err != nil {
+		meta := rag.CollectionMeta{
+			Name:       "sessions",
+			Provider:   "ollama",
+			Dimensions: idx.provider.Dimensions(),
+		}
+		col, err = rag.CreateCollection(colDir, meta)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	idx.col = col
+	return col, nil
 }
 
 func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protocol.HookEvent) string {
@@ -251,7 +265,7 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 			continue
 		}
 
-		if e.Injected != "" {
+		if e.HasContext {
 			hasContext = true
 		}
 
@@ -416,9 +430,3 @@ func (idx *SessionIndexer) writeProjectRef(cwd, agent, sessionID string) {
 	}
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}

@@ -89,7 +89,7 @@ func (m *Manager) ProcessEvent(event *protocol.HookEvent, resp *protocol.HookRes
 	detail := extractDetail(event)
 
 	// Record the event
-	session.RecordEvent(event.EventType, event.ToolName, detail, resp.Context, resp.PermissionDecision)
+	session.RecordEvent(event.EventType, event.ToolName, detail, resp.Context != "", resp.PermissionDecision)
 
 	return resp
 }
@@ -111,13 +111,7 @@ func extractDetail(event *protocol.HookEvent) string {
 	}
 
 	switch event.ToolName {
-	case "Read":
-		return shortPath(strField(event.ToolInput, "file_path"))
-
-	case "Write":
-		return shortPath(strField(event.ToolInput, "file_path"))
-
-	case "Edit":
+	case "Read", "Write", "Edit":
 		return shortPath(strField(event.ToolInput, "file_path"))
 
 	case "Bash":

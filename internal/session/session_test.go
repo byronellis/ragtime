@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/byronellis/ragtime/internal/protocol"
@@ -152,23 +153,10 @@ func TestExtractDetail(t *testing.T) {
 				}
 				return
 			}
-			if !contains(detail, tt.contains) {
+			if !strings.Contains(detail, tt.contains) {
 				t.Errorf("detail %q does not contain %q", detail, tt.contains)
 			}
 		})
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && searchString(s, substr)))
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
