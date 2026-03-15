@@ -210,30 +210,148 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Session: %s | Agent: %s | Project: %s\n",
-		hookEvent.SessionID, hookEvent.Agent, hookEvent.CWD)
-	b.WriteString("---\n")
+
+	// Header with project context
+	projectName := hookEvent.CWD
+	if parts := strings.Split(projectName, "/"); len(parts) > 0 {
+		projectName = parts[len(parts)-1]
+	}
+
+	date := events[0].Timestamp.Format("2006-01-02")
+	timeRange := events[0].Timestamp.Format("15:04")
+	if len(events) > 1 {
+		timeRange += "-" + events[len(events)-1].Timestamp.Format("15:04")
+	}
+
+	fmt.Fprintf(&b, "Project: %s (%s)\nAgent: %s | Session: %s | Time: %s\n\n",
+		projectName, hookEvent.CWD, hookEvent.Agent, hookEvent.SessionID, date+" "+timeRange)
+
+	// Collect file reads, writes, edits, commands into meaningful groups
+	var reads []string
+	var writes []string
+	var edits []string
+	var commands []string
+	var searches []string
+	var agents []string
+	var denied []string
+	hasContext := false
+
+	seen := make(map[string]bool) // dedup file paths within this batch
 
 	for _, e := range events {
-		ts := e.Timestamp.Format("15:04:05")
-		b.WriteString(ts)
-		b.WriteString(" ")
-		b.WriteString(e.EventType)
-
-		if e.ToolName != "" {
-			fmt.Fprintf(&b, " [%s]", e.ToolName)
+		// Skip post-tool-use — pre-tool-use has the detail we need
+		if e.EventType == "post-tool-use" {
+			continue
 		}
-		if e.Decision != "" {
-			fmt.Fprintf(&b, " decision=%s", e.Decision)
-		}
-		b.WriteString("\n")
 
 		if e.Injected != "" {
-			fmt.Fprintf(&b, "  context: %s\n", truncate(e.Injected, 500))
+			hasContext = true
+		}
+
+		if e.Decision == "deny" {
+			detail := e.ToolName
+			if e.Detail != "" {
+				detail += ": " + e.Detail
+			}
+			denied = append(denied, detail)
+			continue
+		}
+
+		if e.EventType != "pre-tool-use" {
+			continue
+		}
+
+		detail := e.Detail
+		if detail == "" {
+			continue
+		}
+
+		switch e.ToolName {
+		case "Read":
+			if !seen["r:"+detail] {
+				reads = append(reads, detail)
+				seen["r:"+detail] = true
+			}
+		case "Write":
+			if !seen["w:"+detail] {
+				writes = append(writes, detail)
+				seen["w:"+detail] = true
+			}
+		case "Edit":
+			if !seen["e:"+detail] {
+				edits = append(edits, detail)
+				seen["e:"+detail] = true
+			}
+		case "Bash":
+			commands = append(commands, detail)
+		case "Grep", "Glob":
+			if !seen["s:"+detail] {
+				searches = append(searches, detail)
+				seen["s:"+detail] = true
+			}
+		case "Agent":
+			agents = append(agents, detail)
 		}
 	}
 
-	return b.String()
+	// Build narrative
+	if len(reads) > 0 {
+		b.WriteString("Read: ")
+		b.WriteString(strings.Join(reads, ", "))
+		b.WriteString("\n")
+	}
+	if len(searches) > 0 {
+		b.WriteString("Searched: ")
+		b.WriteString(strings.Join(searches, "; "))
+		b.WriteString("\n")
+	}
+	if len(edits) > 0 {
+		b.WriteString("Edited: ")
+		b.WriteString(strings.Join(edits, ", "))
+		b.WriteString("\n")
+	}
+	if len(writes) > 0 {
+		b.WriteString("Wrote: ")
+		b.WriteString(strings.Join(writes, ", "))
+		b.WriteString("\n")
+	}
+	if len(commands) > 0 {
+		b.WriteString("Ran:\n")
+		for _, cmd := range commands {
+			fmt.Fprintf(&b, "  $ %s\n", cmd)
+		}
+	}
+	if len(agents) > 0 {
+		b.WriteString("Sub-agents: ")
+		b.WriteString(strings.Join(agents, "; "))
+		b.WriteString("\n")
+	}
+	if len(denied) > 0 {
+		b.WriteString("Denied: ")
+		b.WriteString(strings.Join(denied, ", "))
+		b.WriteString("\n")
+	}
+	if hasContext {
+		b.WriteString("Context was injected from RAG/rules\n")
+	}
+
+	result := b.String()
+	// Skip empty turns (only header, no actions)
+	if !strings.Contains(result, "\n\n") {
+		return ""
+	}
+	lines := strings.Split(result, "\n")
+	contentLines := 0
+	for _, l := range lines {
+		if l != "" && !strings.HasPrefix(l, "Project:") && !strings.HasPrefix(l, "Agent:") {
+			contentLines++
+		}
+	}
+	if contentLines == 0 {
+		return ""
+	}
+
+	return result
 }
 
 func (idx *SessionIndexer) writeProjectRef(cwd, agent, sessionID string) {

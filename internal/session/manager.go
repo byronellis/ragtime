@@ -1,7 +1,10 @@
 package session
 
 import (
+	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/byronellis/ragtime/internal/protocol"
@@ -82,8 +85,95 @@ func (m *Manager) ProcessEvent(event *protocol.HookEvent, resp *protocol.HookRes
 		}
 	}
 
+	// Extract a meaningful detail string from tool input
+	detail := extractDetail(event)
+
 	// Record the event
-	session.RecordEvent(event.EventType, event.ToolName, resp.Context, resp.PermissionDecision)
+	session.RecordEvent(event.EventType, event.ToolName, detail, resp.Context, resp.PermissionDecision)
 
 	return resp
+}
+
+// extractDetail pulls the most relevant info from a hook event's tool input
+// to produce a short, human-readable description of what the tool did.
+func extractDetail(event *protocol.HookEvent) string {
+	if len(event.ToolInput) == 0 {
+		return ""
+	}
+
+	switch event.ToolName {
+	case "Read":
+		return shortPath(strField(event.ToolInput, "file_path"))
+
+	case "Write":
+		return shortPath(strField(event.ToolInput, "file_path"))
+
+	case "Edit":
+		return shortPath(strField(event.ToolInput, "file_path"))
+
+	case "Bash":
+		cmd := strField(event.ToolInput, "command")
+		if len(cmd) > 200 {
+			cmd = cmd[:200] + "..."
+		}
+		return cmd
+
+	case "Grep":
+		pattern := strField(event.ToolInput, "pattern")
+		path := strField(event.ToolInput, "path")
+		if path != "" {
+			return fmt.Sprintf("%q in %s", pattern, shortPath(path))
+		}
+		return fmt.Sprintf("%q", pattern)
+
+	case "Glob":
+		return strField(event.ToolInput, "pattern")
+
+	case "Agent":
+		desc := strField(event.ToolInput, "description")
+		if desc != "" {
+			return desc
+		}
+		return strField(event.ToolInput, "prompt")
+
+	case "WebSearch":
+		return strField(event.ToolInput, "query")
+
+	case "WebFetch":
+		return strField(event.ToolInput, "url")
+
+	default:
+		// For unknown tools, try common field names
+		for _, key := range []string{"file_path", "path", "command", "query", "description"} {
+			if v := strField(event.ToolInput, key); v != "" {
+				return shortPath(v)
+			}
+		}
+		return ""
+	}
+}
+
+// strField extracts a string field from a map[string]any.
+func strField(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Sprintf("%v", v)
+	}
+	return s
+}
+
+// shortPath reduces an absolute path to the last 3 components for readability.
+func shortPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	if len(parts) <= 3 {
+		return path
+	}
+	return strings.Join(parts[len(parts)-3:], "/")
 }

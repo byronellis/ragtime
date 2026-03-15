@@ -37,6 +37,7 @@ func TestManagerProcessEvent_Dedup(t *testing.T) {
 		SessionID: "sess-1",
 		EventType: "pre-tool-use",
 		ToolName:  "Read",
+		ToolInput: map[string]any{"file_path": "/foo/bar.go"},
 	}
 
 	resp := &protocol.HookResponse{
@@ -60,6 +61,12 @@ func TestManagerProcessEvent_Dedup(t *testing.T) {
 	if sess.EventCount() != 2 {
 		t.Errorf("event count = %d, want 2", sess.EventCount())
 	}
+
+	// Events should have detail from ToolInput
+	events := sess.RecentEvents(2)
+	if events[0].Detail == "" {
+		t.Error("event should have detail extracted from ToolInput")
+	}
 }
 
 func TestManagerProcessEvent_NoSession(t *testing.T) {
@@ -78,4 +85,82 @@ func TestManagerProcessEvent_NoSession(t *testing.T) {
 	if result.Context != "test" {
 		t.Errorf("context = %q, want test", result.Context)
 	}
+}
+
+func TestExtractDetail(t *testing.T) {
+	tests := []struct {
+		name     string
+		event    *protocol.HookEvent
+		contains string
+	}{
+		{
+			name: "Read extracts file_path",
+			event: &protocol.HookEvent{
+				ToolName:  "Read",
+				ToolInput: map[string]any{"file_path": "/Users/me/project/internal/foo/bar.go"},
+			},
+			contains: "foo/bar.go",
+		},
+		{
+			name: "Bash extracts command",
+			event: &protocol.HookEvent{
+				ToolName:  "Bash",
+				ToolInput: map[string]any{"command": "go build ./..."},
+			},
+			contains: "go build",
+		},
+		{
+			name: "Grep extracts pattern and path",
+			event: &protocol.HookEvent{
+				ToolName:  "Grep",
+				ToolInput: map[string]any{"pattern": "func main", "path": "/project/cmd"},
+			},
+			contains: "func main",
+		},
+		{
+			name: "Agent extracts description",
+			event: &protocol.HookEvent{
+				ToolName:  "Agent",
+				ToolInput: map[string]any{"description": "explore codebase"},
+			},
+			contains: "explore codebase",
+		},
+		{
+			name: "empty input returns empty",
+			event: &protocol.HookEvent{
+				ToolName:  "Read",
+				ToolInput: nil,
+			},
+			contains: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detail := extractDetail(tt.event)
+			if tt.contains == "" {
+				if detail != "" {
+					t.Errorf("got %q, want empty", detail)
+				}
+				return
+			}
+			if !contains(detail, tt.contains) {
+				t.Errorf("detail %q does not contain %q", detail, tt.contains)
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && searchString(s, substr)))
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
