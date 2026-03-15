@@ -7,22 +7,24 @@ import (
 )
 
 // ClaudeRawEvent represents the JSON structure Claude Code sends on stdin.
+// ClaudeRawEvent represents the JSON structure Claude Code sends on stdin.
+// Field names match Claude Code's hook event schemas.
 type ClaudeRawEvent struct {
-	SessionID      string         `json:"session_id"`
-	TranscriptPath string         `json:"transcript_path"`
-	CWD            string         `json:"cwd"`
-	ToolName       string         `json:"tool_name,omitempty"`
-	ToolInput      map[string]any `json:"tool_input,omitempty"`
-	ToolResponse   any            `json:"tool_response,omitempty"`
-	Prompt         string         `json:"prompt,omitempty"`
-	Response       string         `json:"response,omitempty"`
-	Message        string         `json:"message,omitempty"`
-	StopReason     string         `json:"stop_reason,omitempty"`
-	Source         string         `json:"source,omitempty"`
-	PermissionMode string         `json:"permission_mode,omitempty"`
-	HookEventName  string         `json:"hook_event_name,omitempty"`
-	AgentID        string         `json:"agent_id,omitempty"`
-	AgentType      string         `json:"agent_type,omitempty"`
+	SessionID            string         `json:"session_id"`
+	TranscriptPath       string         `json:"transcript_path"`
+	CWD                  string         `json:"cwd"`
+	ToolName             string         `json:"tool_name,omitempty"`
+	ToolInput            map[string]any `json:"tool_input,omitempty"`
+	ToolResponse         any            `json:"tool_response,omitempty"`
+	Prompt               string         `json:"prompt,omitempty"`
+	LastAssistantMessage string         `json:"last_assistant_message,omitempty"`
+	Message              string         `json:"message,omitempty"`
+	StopHookActive       bool           `json:"stop_hook_active,omitempty"`
+	Source               string         `json:"source,omitempty"`
+	PermissionMode       string         `json:"permission_mode,omitempty"`
+	HookEventName        string         `json:"hook_event_name,omitempty"`
+	AgentID              string         `json:"agent_id,omitempty"`
+	AgentType            string         `json:"agent_type,omitempty"`
 }
 
 // ParseClaudeEvent converts raw stdin bytes from Claude Code into a universal HookEvent.
@@ -47,13 +49,13 @@ func ParseClaudeEvent(data []byte, eventType string) (*protocol.HookEvent, error
 		Raw:       rawMap,
 	}
 
-	// Extract agent response text from stop/notification events
+	// Extract agent response text from stop/notification/subagent-stop events
 	switch eventType {
-	case "stop":
-		event.Response = raw.Response
-		// Fall back to checking raw map if typed field is empty
+	case "stop", "subagent-stop":
+		event.Response = raw.LastAssistantMessage
+		// Fall back to raw map in case field name changes
 		if event.Response == "" {
-			event.Response = rawString(rawMap, "response")
+			event.Response = rawString(rawMap, "last_assistant_message")
 		}
 	case "notification":
 		event.Response = raw.Message
