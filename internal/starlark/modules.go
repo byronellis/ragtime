@@ -32,6 +32,11 @@ func eventToStarlark(e *protocol.HookEvent) *starlarkstruct.Struct {
 		toolInput.SetKey(starlark.String(k), goToStarlark(v))
 	}
 
+	raw := starlark.NewDict(len(e.Raw))
+	for k, v := range e.Raw {
+		raw.SetKey(starlark.String(k), goToStarlark(v))
+	}
+
 	return starlarkstruct.FromStringDict(starlark.String("event"), starlark.StringDict{
 		"agent":         starlark.String(e.Agent),
 		"event_type":    starlark.String(e.EventType),
@@ -42,6 +47,7 @@ func eventToStarlark(e *protocol.HookEvent) *starlarkstruct.Struct {
 		"prompt":        starlark.String(e.Prompt),
 		"response":      starlark.String(e.Response),
 		"cwd":           starlark.String(e.CWD),
+		"raw":           raw,
 	})
 }
 

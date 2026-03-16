@@ -128,11 +128,39 @@ func ClaudeStopResponse(resp *protocol.HookResponse) map[string]any {
 	return output
 }
 
+// ClaudePermissionRequestResponse formats a HookResponse for PermissionRequest events.
+// PermissionRequest uses "behavior"/"message" instead of "permissionDecision"/"permissionDecisionReason".
+func ClaudePermissionRequestResponse(resp *protocol.HookResponse) map[string]any {
+	output := map[string]any{}
+	hookOutput := map[string]any{
+		"hookEventName": "PermissionRequest",
+	}
+
+	switch resp.PermissionDecision {
+	case protocol.PermAllow:
+		hookOutput["behavior"] = "allow"
+	case protocol.PermDeny:
+		hookOutput["behavior"] = "deny"
+		if resp.DenyReason != "" {
+			hookOutput["message"] = resp.DenyReason
+		}
+	}
+
+	if len(hookOutput) > 1 {
+		output["hookSpecificOutput"] = hookOutput
+	}
+
+	mergeOverrides(output, resp.OutputOverrides)
+	return output
+}
+
 // FormatClaudeResponse routes to the appropriate response formatter based on event type.
 func FormatClaudeResponse(resp *protocol.HookResponse, eventType string) map[string]any {
 	switch eventType {
 	case "pre-tool-use":
 		return ClaudePreToolUseResponse(resp)
+	case "permission-request":
+		return ClaudePermissionRequestResponse(resp)
 	case "post-tool-use":
 		return ClaudePostToolUseResponse(resp)
 	case "stop":
