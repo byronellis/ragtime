@@ -1,0 +1,8 @@
+# Auto-approve all Read and Glob tool calls.
+# These are safe, read-only operations that don't need human oversight.
+name: auto-approve-reads
+match:
+  event: pre-tool-use
+  tool: "Read|Glob|Grep"
+actions:
+  - type: approve

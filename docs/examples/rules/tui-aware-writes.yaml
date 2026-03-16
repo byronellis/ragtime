@@ -1,0 +1,17 @@
+# Smart write permissions based on TUI connectivity and file type.
+# - Test files are always auto-approved
+# - Other files: ask if TUI is connected, approve if unattended
+name: tui-aware-writes
+match:
+  event: pre-tool-use
+  tool: "Write|Edit"
+actions:
+  - type: starlark
+    script: |
+      path = event.tool_input.get("file_path", "")
+      if path.endswith("_test.go"):
+          response.approve()
+      elif tui.connected():
+          response.ask()
+      else:
+          response.approve()

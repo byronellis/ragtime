@@ -1,0 +1,7 @@
+# Log all hook events for debugging. Useful during rule development.
+name: log-all-events
+match:
+  event: "*"
+  agent: "*"
+actions:
+  - type: log

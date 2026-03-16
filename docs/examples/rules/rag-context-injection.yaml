@@ -1,0 +1,18 @@
+# Inject relevant project documentation when the agent reads files.
+# Uses RAG search to find docs related to the file being read.
+name: rag-context-injection
+match:
+  event: pre-tool-use
+  tool: Read
+actions:
+  - type: starlark
+    script: |
+      path = event.tool_input.get("file_path", "")
+      if not path:
+          pass  # no-op if no path
+      else:
+          # Search project docs for context related to this file
+          results = rag.search("project-docs", path, top_k=3)
+          for r in results:
+              if r["score"] > 0.7:
+                  response.inject_context(r["content"])

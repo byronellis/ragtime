@@ -1,0 +1,20 @@
+# Inject cross-session context when the agent starts a new prompt.
+# Searches past session history for relevant decisions and discussions.
+name: session-context
+match:
+  event: user-prompt-submit
+actions:
+  - type: starlark
+    script: |
+      prompt = event.prompt
+      if not prompt or len(prompt) < 10:
+          pass  # skip trivial prompts
+      else:
+          results = rag.search("sessions", prompt, top_k=3)
+          context_parts = []
+          for r in results:
+              if r["score"] > 0.75:
+                  context_parts.append(r["content"])
+          if context_parts:
+              header = "Relevant context from previous sessions:\n\n"
+              response.inject_context(header + "\n---\n".join(context_parts))
