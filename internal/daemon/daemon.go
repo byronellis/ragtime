@@ -18,6 +18,7 @@ import (
 	"github.com/byronellis/ragtime/internal/rag"
 	"github.com/byronellis/ragtime/internal/rag/providers"
 	"github.com/byronellis/ragtime/internal/session"
+	ragstarlark "github.com/byronellis/ragtime/internal/starlark"
 )
 
 // Daemon is the central ragtime process.
@@ -111,6 +112,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// Create subscription manager for TUI streaming
 	d.subs = NewSubscriptionManager(d, d.logger)
+
+	// Initialize Starlark runner with RAG and TUI state
+	starlarkRunner := ragstarlark.NewRunner(ragEngine, d.subs, d.logger)
+	d.engine.SetScripts(starlarkRunner)
 
 	// Subscribe to bus for TUI broadcasting
 	d.bus.Subscribe(func(event *protocol.HookEvent) {

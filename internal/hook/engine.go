@@ -21,12 +21,18 @@ type SearchResult struct {
 	Score    float32 `json:"score"`
 }
 
+// ScriptRunner executes Starlark scripts for hook actions.
+type ScriptRunner interface {
+	Execute(script string, event *protocol.HookEvent) (*protocol.HookResponse, error)
+}
+
 // Engine evaluates hook events against rules and produces responses.
 type Engine struct {
-	mu     sync.RWMutex
-	rules  []config.RuleConfig
-	rag    RAGSearcher
-	logger *slog.Logger
+	mu      sync.RWMutex
+	rules   []config.RuleConfig
+	rag     RAGSearcher
+	scripts ScriptRunner
+	logger  *slog.Logger
 }
 
 // NewEngine creates a hook engine with the given rules.
@@ -42,6 +48,13 @@ func (e *Engine) SetRAG(rag RAGSearcher) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.rag = rag
+}
+
+// SetScripts connects a Starlark runner to the engine.
+func (e *Engine) SetScripts(runner ScriptRunner) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.scripts = runner
 }
 
 // SetRules replaces the current rule set (used by hot reload).
@@ -71,6 +84,7 @@ func (e *Engine) Evaluate(event *protocol.HookEvent) *protocol.HookResponse {
 	e.mu.RLock()
 	rules := e.rules
 	rag := e.rag
+	scripts := e.scripts
 	e.mu.RUnlock()
 
 	resp := &protocol.HookResponse{}
@@ -120,6 +134,24 @@ func (e *Engine) Evaluate(event *protocol.HookEvent) *protocol.HookResponse {
 					for _, r := range results {
 						contextParts = append(contextParts, r.Content)
 					}
+				}
+
+			case "starlark":
+				if scripts == nil {
+					e.logger.Warn("starlark action but no runner configured", "rule", rule.Name)
+					continue
+				}
+				result, err := scripts.Execute(action.Script, event)
+				if err != nil {
+					e.logger.Error("starlark execution failed", "rule", rule.Name, "error", err)
+					continue
+				}
+				if result.Context != "" {
+					contextParts = append(contextParts, result.Context)
+				}
+				if result.PermissionDecision != "" {
+					resp.PermissionDecision = result.PermissionDecision
+					resp.DenyReason = result.DenyReason
 				}
 
 			case "log":
