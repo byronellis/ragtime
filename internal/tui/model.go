@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/byronellis/ragtime/internal/protocol"
@@ -13,6 +15,7 @@ type Model struct {
 	sessionsPanel SessionsPanel
 	eventFeed     EventFeed
 	helpBar       HelpBar
+	interaction   *InteractionModal
 	connected     bool
 	disconnectErr error
 	width         int
@@ -41,8 +44,60 @@ func (m Model) Init() tea.Cmd {
 	}
 }
 
+// interactionTickCmd returns a command that fires a tick after one second.
+func interactionTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return InteractionTickMsg{}
+	})
+}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// When modal is active, route all input to it
+	if m.interaction != nil {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			modal, cmd := m.interaction.Update(msg)
+			m.interaction = &modal
+			return m, cmd
+
+		case InteractionTickMsg:
+			modal, cmd := m.interaction.Update(msg)
+			m.interaction = &modal
+			if cmd != nil {
+				return m, cmd // dismiss command
+			}
+			return m, interactionTickCmd() // keep ticking
+
+		case InteractionDismissMsg:
+			m.client.SendInteractionResponse(msg.Response)
+			m.interaction = nil
+			return m, nil
+
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+			m.recalcLayout()
+			m.interaction.SetSize(m.width, m.height)
+			return m, nil
+
+		case EventMsg:
+			m.eventFeed.Push(msg.Event)
+			m.sessionsPanel.Update(msg.Event)
+			m.statusBar.SetSessions(m.sessionsPanel.Count())
+			m.updateProject(msg.Event)
+			m.recalcLayout()
+			return m, nil
+
+		case DisconnectedMsg:
+			m.connected = false
+			m.disconnectErr = msg.Err
+			m.interaction = nil // dismiss modal on disconnect
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -72,7 +127,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionsPanel.Update(msg.Event)
 		m.statusBar.SetSessions(m.sessionsPanel.Count())
 		m.updateProject(msg.Event)
-		m.recalcLayout() // session panel height may change
+		m.recalcLayout()
+
+	case InteractionRequestMsg:
+		modal := NewInteractionModal(msg.Request, m.width, m.height)
+		m.interaction = &modal
+		return m, interactionTickCmd()
 
 	case DisconnectedMsg:
 		m.connected = false
@@ -141,6 +201,11 @@ func (m Model) feedHeight() int {
 
 // View renders the full TUI.
 func (m Model) View() string {
+	// Modal overlay takes over the entire screen
+	if m.interaction != nil {
+		return m.interaction.View()
+	}
+
 	var status string
 	if m.connected {
 		status = m.statusBar.View()

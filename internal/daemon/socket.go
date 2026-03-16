@@ -120,8 +120,11 @@ func (s *SocketServer) handleConn(conn net.Conn) {
 
 // handleStreamConn manages a persistent TUI subscription connection.
 func (s *SocketServer) handleStreamConn(conn net.Conn, env *protocol.Envelope) {
-	// Register and send initial snapshot
+	// Register, send initial snapshot, and drain any queued interactions
 	resp := s.subs.Register(conn)
+	if s.subs.daemon.interactions != nil {
+		go s.subs.daemon.interactions.DrainQueue()
+	}
 	snapEnv, err := protocol.NewEnvelope(protocol.MsgSubscribe, resp)
 	if err != nil {
 		s.logger.Error("marshal subscribe response", "error", err)
@@ -145,7 +148,8 @@ func (s *SocketServer) handleStreamConn(conn net.Conn, env *protocol.Envelope) {
 			return
 		}
 
-		if msg.Type == protocol.MsgCommand {
+		switch msg.Type {
+		case protocol.MsgCommand:
 			cmdResp, err := s.handler.Handle(msg)
 			if err != nil {
 				s.logger.Error("stream command", "error", err)
@@ -159,6 +163,16 @@ func (s *SocketServer) handleStreamConn(conn net.Conn, env *protocol.Envelope) {
 				cs.writeMu.Lock()
 				protocol.WriteMessage(conn, cmdResp)
 				cs.writeMu.Unlock()
+			}
+
+		case protocol.MsgInteractionResponse:
+			var resp protocol.InteractionResponse
+			if err := msg.DecodePayload(&resp); err != nil {
+				s.logger.Error("decode interaction response", "error", err)
+				continue
+			}
+			if s.subs.daemon.interactions != nil {
+				s.subs.daemon.interactions.HandleResponse(resp)
 			}
 		}
 	}

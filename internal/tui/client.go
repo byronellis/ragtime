@@ -81,14 +81,34 @@ func (c *Client) ReadLoop(p *tea.Program) {
 			return
 		}
 
-		if env.Type == protocol.MsgEvent {
+		switch env.Type {
+		case protocol.MsgEvent:
 			var event protocol.StreamEvent
 			if err := env.DecodePayload(&event); err != nil {
 				continue
 			}
+
+			// Route interaction requests to the modal
+			if event.Kind == "interaction_request" && event.Interaction != nil {
+				p.Send(InteractionRequestMsg{Request: *event.Interaction})
+				continue
+			}
+
 			p.Send(EventMsg{Event: event})
 		}
 	}
+}
+
+// SendInteractionResponse sends the user's interaction response back to the daemon.
+func (c *Client) SendInteractionResponse(resp protocol.InteractionResponse) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	env, err := protocol.NewEnvelope(protocol.MsgInteractionResponse, &resp)
+	if err != nil {
+		return err
+	}
+	return protocol.WriteMessage(c.conn, env)
 }
 
 // Close shuts down the connection.

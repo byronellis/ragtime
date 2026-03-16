@@ -2,7 +2,10 @@ package starlark
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/byronellis/ragtime/internal/protocol"
 	"go.starlark.net/starlark"
@@ -12,11 +15,12 @@ import (
 // buildPredeclared creates the namespace of globals available to Starlark scripts.
 func (r *Runner) buildPredeclared(event *protocol.HookEvent, resp *responseHelper) starlark.StringDict {
 	return starlark.StringDict{
-		"event":    eventToStarlark(event),
-		"response": resp,
-		"rag":      r.ragModule(),
-		"tui":      r.tuiModule(),
-		"log":      starlark.NewBuiltin("log", r.logBuiltin),
+		"event":        eventToStarlark(event),
+		"response":     resp,
+		"rag":          r.ragModule(),
+		"tui":          r.tuiModule(),
+		"log":          starlark.NewBuiltin("log", r.logBuiltin),
+		"inject_input": starlark.NewBuiltin("inject_input", resp.injectInputBuiltin),
 	}
 }
 
@@ -74,10 +78,15 @@ type responseHelper struct {
 	context    []string
 	decision   protocol.PermissionDecision
 	denyReason string
+	interactor Interactor
+	event      *protocol.HookEvent
 }
 
-func newResponseHelper() *responseHelper {
-	return &responseHelper{}
+func newResponseHelper(interactor Interactor, event *protocol.HookEvent) *responseHelper {
+	return &responseHelper{
+		interactor: interactor,
+		event:      event,
+	}
 }
 
 func (rh *responseHelper) toResponse() *protocol.HookResponse {
@@ -100,7 +109,7 @@ func (rh *responseHelper) Truth() starlark.Bool   { return true }
 func (rh *responseHelper) Hash() (uint32, error)  { return 0, fmt.Errorf("unhashable") }
 
 func (rh *responseHelper) AttrNames() []string {
-	return []string{"inject_context", "approve", "deny", "ask"}
+	return []string{"inject_context", "approve", "deny", "ask", "prompt"}
 }
 
 func (rh *responseHelper) Attr(name string) (starlark.Value, error) {
@@ -113,6 +122,8 @@ func (rh *responseHelper) Attr(name string) (starlark.Value, error) {
 		return starlark.NewBuiltin("response.deny", rh.deny), nil
 	case "ask":
 		return starlark.NewBuiltin("response.ask", rh.ask), nil
+	case "prompt":
+		return starlark.NewBuiltin("response.prompt", rh.promptBuiltin), nil
 	default:
 		return nil, nil
 	}
@@ -145,6 +156,129 @@ func (rh *responseHelper) deny(_ *starlark.Thread, _ *starlark.Builtin, args sta
 func (rh *responseHelper) ask(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	rh.decision = protocol.PermAsk
 	return starlark.None, nil
+}
+
+// promptBuiltin sends an interaction request to the TUI and blocks until response.
+func (rh *responseHelper) promptBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var text string
+	interType := "ok_cancel"
+	defaultVal := "cancel"
+	timeout := 30
+
+	if err := starlark.UnpackArgs("response.prompt", args, kwargs,
+		"text", &text,
+		"type?", &interType,
+		"default?", &defaultVal,
+		"timeout?", &timeout,
+	); err != nil {
+		return nil, err
+	}
+
+	if rh.interactor == nil {
+		return starlark.String(defaultVal), nil
+	}
+
+	resp := rh.interactor.Prompt(text, protocol.InteractionType(interType), defaultVal, timeout)
+	return starlark.String(resp.Value), nil
+}
+
+// --- inject_input ---
+
+// injectInputBuiltin sends key sequences to a terminal multiplexer pane.
+// Usage: inject_input([{"keys": "y", "delay_ms": 100}, {"keys": "Enter"}])
+func (rh *responseHelper) injectInputBuiltin(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("inject_input: expected 1 argument (list of sequences), got %d", len(args))
+	}
+
+	seqList, ok := args[0].(*starlark.List)
+	if !ok {
+		return nil, fmt.Errorf("inject_input: expected list, got %s", args[0].Type())
+	}
+
+	mux := detectMux(rh.event)
+	if mux == nil {
+		return nil, fmt.Errorf("inject_input: no terminal multiplexer detected")
+	}
+
+	iter := seqList.Iterate()
+	defer iter.Done()
+	var val starlark.Value
+	for iter.Next(&val) {
+		dict, ok := val.(*starlark.Dict)
+		if !ok {
+			return nil, fmt.Errorf("inject_input: sequence items must be dicts, got %s", val.Type())
+		}
+
+		keysVal, found, err := dict.Get(starlark.String("keys"))
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+		keys, ok := starlark.AsString(keysVal)
+		if !ok {
+			return nil, fmt.Errorf("inject_input: 'keys' must be a string")
+		}
+
+		if err := sendKeys(mux, keys); err != nil {
+			return nil, fmt.Errorf("inject_input: %w", err)
+		}
+
+		// Check for delay
+		delayVal, found, err := dict.Get(starlark.String("delay_ms"))
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			if delayInt, err := starlark.AsInt32(delayVal); err == nil && delayInt > 0 {
+				time.Sleep(time.Duration(delayInt) * time.Millisecond)
+			}
+		}
+	}
+
+	return starlark.None, nil
+}
+
+// detectMux detects the terminal multiplexer from the event's MuxInfo or environment.
+func detectMux(event *protocol.HookEvent) *protocol.MuxInfo {
+	if event != nil && event.Mux != nil && event.Mux.Type != "" {
+		return event.Mux
+	}
+
+	// Fall back to environment variables
+	if tmux := os.Getenv("TMUX"); tmux != "" {
+		pane := os.Getenv("TMUX_PANE")
+		return &protocol.MuxInfo{Type: "tmux", Pane: pane}
+	}
+	if sty := os.Getenv("STY"); sty != "" {
+		return &protocol.MuxInfo{Type: "screen", SessionName: sty}
+	}
+	return nil
+}
+
+// sendKeys sends a key sequence to the multiplexer pane.
+func sendKeys(mux *protocol.MuxInfo, keys string) error {
+	switch mux.Type {
+	case "tmux":
+		args := []string{"send-keys"}
+		if mux.Pane != "" {
+			args = append(args, "-t", mux.Pane)
+		}
+		args = append(args, keys)
+		return exec.Command("tmux", args...).Run()
+
+	case "screen":
+		args := []string{"-X", "stuff", keys}
+		if mux.SessionName != "" {
+			args = append([]string{"-S", mux.SessionName}, args...)
+		}
+		return exec.Command("screen", args...).Run()
+
+	default:
+		return fmt.Errorf("unsupported multiplexer type: %s", mux.Type)
+	}
 }
 
 // --- rag module ---
@@ -217,4 +351,3 @@ func (r *Runner) logBuiltin(thread *starlark.Thread, _ *starlark.Builtin, args s
 	thread.Print(thread, strings.Join(parts, " "))
 	return starlark.None, nil
 }
-

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"encoding/json"
+	"os"
 
 	"github.com/byronellis/ragtime/internal/protocol"
 )
@@ -65,6 +66,9 @@ func ParseClaudeEvent(data []byte, eventType string) (*protocol.HookEvent, error
 	case "post-tool-use":
 		event.ToolResponse = stringifyToolResponse(raw.ToolResponse)
 	}
+
+	// Detect terminal multiplexer from the hook process environment
+	event.Mux = DetectMux()
 
 	return event, nil
 }
@@ -175,4 +179,17 @@ func stringifyToolResponse(v any) string {
 		return s[:2000] + "..."
 	}
 	return s
+}
+
+// DetectMux detects the terminal multiplexer from environment variables.
+// Called in the hook process which inherits the terminal environment.
+func DetectMux() *protocol.MuxInfo {
+	if tmux := os.Getenv("TMUX"); tmux != "" {
+		pane := os.Getenv("TMUX_PANE")
+		return &protocol.MuxInfo{Type: "tmux", Pane: pane}
+	}
+	if sty := os.Getenv("STY"); sty != "" {
+		return &protocol.MuxInfo{Type: "screen", SessionName: sty}
+	}
+	return nil
 }

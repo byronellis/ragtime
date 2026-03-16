@@ -12,8 +12,10 @@ const (
 	MsgHookEvent    MessageType = "hook_event"
 	MsgHookResponse MessageType = "hook_response"
 	MsgCommand      MessageType = "command"
-	MsgSubscribe    MessageType = "subscribe"
-	MsgEvent        MessageType = "event"
+	MsgSubscribe            MessageType = "subscribe"
+	MsgEvent                MessageType = "event"
+	MsgInteractionRequest   MessageType = "interaction_request"
+	MsgInteractionResponse  MessageType = "interaction_response"
 )
 
 // Envelope wraps all messages sent over the wire protocol.
@@ -106,8 +108,34 @@ type SessionInfo struct {
 
 // StreamEvent wraps events pushed to TUI subscribers.
 type StreamEvent struct {
-	Kind      string       `json:"kind"` // "hook_event", "session_update"
-	Timestamp time.Time    `json:"timestamp"`
-	Event     *HookEvent   `json:"event,omitempty"`
-	Session   *SessionInfo `json:"session,omitempty"`
+	Kind        string              `json:"kind"` // "hook_event", "session_update", "interaction_request"
+	Timestamp   time.Time           `json:"timestamp"`
+	Event       *HookEvent          `json:"event,omitempty"`
+	Session     *SessionInfo        `json:"session,omitempty"`
+	Interaction *InteractionRequest `json:"interaction,omitempty"`
+}
+
+// InteractionType determines the input mode for a TUI interaction.
+type InteractionType string
+
+const (
+	InteractionOKCancel          InteractionType = "ok_cancel"
+	InteractionApproveDenyCancel InteractionType = "approve_deny_cancel"
+	InteractionFreeform          InteractionType = "freeform"
+)
+
+// InteractionRequest is sent from the daemon to the TUI to prompt the user.
+type InteractionRequest struct {
+	ID         string          `json:"id"`
+	Text       string          `json:"text"`        // markdown-formatted prompt
+	Type       InteractionType `json:"type"`
+	Default    string          `json:"default"`      // auto-response on timeout
+	TimeoutSec int            `json:"timeout_sec"`
+}
+
+// InteractionResponse is sent from the TUI back to the daemon.
+type InteractionResponse struct {
+	ID       string `json:"id"`
+	Value    string `json:"value"`     // "ok", "cancel", "approve", "deny", or freeform text
+	TimedOut bool   `json:"timed_out"`
 }

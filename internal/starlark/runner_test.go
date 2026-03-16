@@ -469,9 +469,9 @@ for r in results:
 }
 
 func TestExecute_ResponseAttrNames(t *testing.T) {
-	rh := newResponseHelper()
+	rh := newResponseHelper(nil, nil)
 	names := rh.AttrNames()
-	expected := map[string]bool{"inject_context": true, "approve": true, "deny": true, "ask": true}
+	expected := map[string]bool{"inject_context": true, "approve": true, "deny": true, "ask": true, "prompt": true}
 	for _, n := range names {
 		if !expected[n] {
 			t.Errorf("unexpected attr: %s", n)
@@ -493,4 +493,93 @@ func TestGoToStarlark_Types(t *testing.T) {
 	_ = goToStarlark(map[string]any{"key": "val"})
 	_ = goToStarlark([]any{"a", 1})
 	_ = goToStarlark(struct{}{}) // fallback to fmt.Sprintf
+}
+
+// mockInteractor implements Interactor for testing.
+type mockInteractor struct {
+	response protocol.InteractionResponse
+}
+
+func (m *mockInteractor) Prompt(text string, interType protocol.InteractionType, defaultVal string, timeoutSec int) protocol.InteractionResponse {
+	return m.response
+}
+
+func TestExecute_PromptWithInteractor(t *testing.T) {
+	r := testRunner()
+	r.SetInteractor(&mockInteractor{
+		response: protocol.InteractionResponse{Value: "approve"},
+	})
+	event := &protocol.HookEvent{EventType: "pre-tool-use", ToolName: "Bash"}
+
+	script := `
+result = response.prompt(text="Allow this command?", type="approve_deny_cancel", default="deny", timeout=10)
+if result == "approve":
+    response.approve()
+else:
+    response.deny("user denied")
+`
+	resp, err := r.Execute(script, event)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if resp.PermissionDecision != protocol.PermAllow {
+		t.Errorf("decision = %q, want allow", resp.PermissionDecision)
+	}
+}
+
+func TestExecute_PromptNoInteractor(t *testing.T) {
+	r := testRunner() // no interactor set
+	event := &protocol.HookEvent{EventType: "pre-tool-use"}
+
+	// Without interactor, prompt returns default value
+	script := `
+result = response.prompt(text="Question?", default="cancel")
+if result == "cancel":
+    response.deny("no TUI")
+`
+	resp, err := r.Execute(script, event)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if resp.PermissionDecision != protocol.PermDeny {
+		t.Errorf("decision = %q, want deny (default returned)", resp.PermissionDecision)
+	}
+}
+
+func TestExecute_InjectInputNoMux(t *testing.T) {
+	r := testRunner()
+	event := &protocol.HookEvent{EventType: "pre-tool-use"}
+
+	// No mux detected — should error
+	_, err := r.Execute(`inject_input([{"keys": "y"}])`, event)
+	if err == nil {
+		t.Fatal("expected error for inject_input without mux")
+	}
+}
+
+func TestExecute_InjectInputBadArgs(t *testing.T) {
+	r := testRunner()
+	event := &protocol.HookEvent{EventType: "pre-tool-use"}
+
+	_, err := r.Execute(`inject_input("not a list")`, event)
+	if err == nil {
+		t.Fatal("expected error for non-list arg")
+	}
+}
+
+func TestDetectMux_FromEvent(t *testing.T) {
+	event := &protocol.HookEvent{
+		Mux: &protocol.MuxInfo{Type: "tmux", Pane: "%5"},
+	}
+	mux := detectMux(event)
+	if mux == nil || mux.Type != "tmux" || mux.Pane != "%5" {
+		t.Errorf("detectMux from event = %v", mux)
+	}
+}
+
+func TestDetectMux_NilEvent(t *testing.T) {
+	// Without env vars set, should return nil
+	mux := detectMux(nil)
+	// Can't guarantee env vars aren't set in CI, so just check it doesn't panic
+	_ = mux
 }

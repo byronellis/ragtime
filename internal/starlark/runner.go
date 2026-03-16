@@ -25,11 +25,17 @@ type TUIState interface {
 	ClientCount() int
 }
 
+// Interactor sends prompts to the TUI and blocks until a response.
+type Interactor interface {
+	Prompt(text string, interType protocol.InteractionType, defaultVal string, timeoutSec int) protocol.InteractionResponse
+}
+
 // Runner compiles and executes Starlark scripts for hook actions.
 type Runner struct {
-	rag    hook.RAGSearcher
-	tui    TUIState
-	logger *slog.Logger
+	rag        hook.RAGSearcher
+	tui        TUIState
+	interactor Interactor
+	logger     *slog.Logger
 
 	mu    sync.RWMutex
 	cache map[string]*starlark.Program // keyed by SHA-256 of source
@@ -46,6 +52,11 @@ func NewRunner(rag hook.RAGSearcher, tui TUIState, logger *slog.Logger) *Runner 
 		logger: logger,
 		cache:  make(map[string]*starlark.Program),
 	}
+}
+
+// SetInteractor connects an interaction manager for TUI prompts.
+func (r *Runner) SetInteractor(i Interactor) {
+	r.interactor = i
 }
 
 // Execute runs a Starlark script in the context of a hook event and returns the response.
@@ -70,7 +81,7 @@ func (r *Runner) Execute(script string, event *protocol.HookEvent) (resp *protoc
 	}
 
 	// Build predeclared namespace
-	respHelper := newResponseHelper()
+	respHelper := newResponseHelper(r.interactor, event)
 	predeclared := r.buildPredeclared(event, respHelper)
 
 	thread := &starlark.Thread{
@@ -132,10 +143,11 @@ func (r *Runner) compile(src, filename string) (*starlark.Program, error) {
 // This is needed at compile time so the compiler knows which names are predeclared vs undefined.
 func (r *Runner) predeclaredNames() starlark.StringDict {
 	return starlark.StringDict{
-		"event":    starlark.None,
-		"response": starlark.None,
-		"rag":      starlark.None,
-		"tui":      starlark.None,
-		"log":      starlark.None,
+		"event":        starlark.None,
+		"response":     starlark.None,
+		"rag":          starlark.None,
+		"tui":          starlark.None,
+		"log":          starlark.None,
+		"inject_input": starlark.None,
 	}
 }

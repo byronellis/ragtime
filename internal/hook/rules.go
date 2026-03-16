@@ -48,6 +48,19 @@ func LoadRulesFromDirs(dirs ...string) ([]config.RuleConfig, error) {
 	return rules, nil
 }
 
+// LoadRulesFromFiles loads rules from explicit file paths.
+func LoadRulesFromFiles(paths ...string) ([]config.RuleConfig, error) {
+	var rules []config.RuleConfig
+	for _, path := range paths {
+		fileRules, err := loadRulesFromFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("load %s: %w", path, err)
+		}
+		rules = append(rules, fileRules...)
+	}
+	return rules, nil
+}
+
 func loadRulesFromFile(path string) ([]config.RuleConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

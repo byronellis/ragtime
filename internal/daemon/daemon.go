@@ -29,9 +29,10 @@ type Daemon struct {
 	sessions  *session.Manager
 	indexer   *session.SessionIndexer
 	bus       *bus.Bus
-	subs      *SubscriptionManager
-	startedAt time.Time
-	logger    *slog.Logger
+	subs         *SubscriptionManager
+	interactions *InteractionManager
+	startedAt    time.Time
+	logger       *slog.Logger
 }
 
 // New creates a new Daemon with the given config.
@@ -112,9 +113,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// Create subscription manager for TUI streaming
 	d.subs = NewSubscriptionManager(d, d.logger)
+	d.interactions = NewInteractionManager(d.subs, d.logger)
 
-	// Initialize Starlark runner with RAG and TUI state
+	// Initialize Starlark runner with RAG, TUI state, and interactions
 	starlarkRunner := ragstarlark.NewRunner(ragEngine, d.subs, d.logger)
+	starlarkRunner.SetInteractor(d.interactions)
 	d.engine.SetScripts(starlarkRunner)
 
 	// Subscribe to bus for TUI broadcasting

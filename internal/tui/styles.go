@@ -103,4 +103,34 @@ var (
 	titleStyle = lipgloss.NewStyle().
 			Foreground(colorBlue).
 			Bold(true)
+
+	// Modal overlay
+	modalBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBlue).
+			Padding(1, 2)
+
+	modalTitleStyle = lipgloss.NewStyle().
+			Foreground(colorBlue).
+			Bold(true)
+
+	modalTextStyle = lipgloss.NewStyle().
+			Foreground(colorWhite)
+
+	modalButtonStyle = lipgloss.NewStyle().
+				Foreground(colorDim).
+				Padding(0, 1).
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colorDim)
+
+	modalButtonActiveStyle = lipgloss.NewStyle().
+				Foreground(colorWhite).
+				Bold(true).
+				Padding(0, 1).
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(colorBlue)
+
+	modalTimerStyle = lipgloss.NewStyle().
+			Foreground(colorYellow).
+			Italic(true)
 )
