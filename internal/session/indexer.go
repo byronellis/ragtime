@@ -231,48 +231,47 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 		projectName = parts[len(parts)-1]
 	}
 
-	date := events[0].Timestamp.Format("2006-01-02")
-	timeRange := events[0].Timestamp.Format("15:04")
+	// Use first/last event timestamps for the time range — these are the
+	// correlation boundaries for looking up tool events separately.
+	startTS := events[0].Timestamp
+	endTS := events[len(events)-1].Timestamp
+
+	date := startTS.Format("2006-01-02")
+	timeRange := startTS.Format("15:04:05")
 	if len(events) > 1 {
-		timeRange += "-" + events[len(events)-1].Timestamp.Format("15:04")
+		timeRange += " — " + endTS.Format("15:04:05")
 	}
 
-	fmt.Fprintf(&b, "Project: %s (%s)\nAgent: %s | Session: %s | Time: %s\n\n",
-		projectName, hookEvent.CWD, hookEvent.Agent, hookEvent.SessionID, date+" "+timeRange)
+	fmt.Fprintf(&b, "Project: %s (%s)\nAgent: %s | Session: %s | %s %s\n",
+		projectName, hookEvent.CWD, hookEvent.Agent, hookEvent.SessionID, date, timeRange)
 
-	// Collect user prompts, file reads, writes, edits, commands into meaningful groups
+	// Emit RFC3339 timestamps as machine-readable correlation keys.
+	// Tool events between these timestamps belong to this turn.
+	fmt.Fprintf(&b, "Start: %s  End: %s\n\n",
+		startTS.UTC().Format(time.RFC3339), endTS.UTC().Format(time.RFC3339))
+
+	// Collect conversational content only — tool details are recorded
+	// separately as individual events and can be correlated by timestamp range.
 	var prompts []string
 	var responses []string
-	var reads []string
-	var writes []string
-	var edits []string
-	var commands []string
-	var searches []string
-	var agents []string
 	var denied []string
 	hasContext := false
-
-	seen := make(map[string]bool) // dedup file paths within this batch
+	toolCount := 0
+	rulesSeen := make(map[string]bool)
+	var rules []string
 
 	for _, e := range events {
-		// Capture user prompts
 		if e.EventType == "user-prompt-submit" && e.Detail != "" {
 			prompts = append(prompts, e.Detail)
 			continue
 		}
 
-		// Capture agent responses from stop events
 		if e.EventType == "stop" && e.Response != "" {
 			resp := e.Response
 			if len(resp) > 2000 {
 				resp = resp[:2000] + "..."
 			}
 			responses = append(responses, resp)
-			continue
-		}
-
-		// Skip post-tool-use — pre-tool-use has the detail we need
-		if e.EventType == "post-tool-use" {
 			continue
 		}
 
@@ -286,47 +285,21 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 				detail += ": " + e.Detail
 			}
 			denied = append(denied, detail)
-			continue
 		}
 
-		if e.EventType != "pre-tool-use" {
-			continue
+		if e.EventType == "pre-tool-use" {
+			toolCount++
 		}
 
-		detail := e.Detail
-		if detail == "" {
-			continue
-		}
-
-		switch e.ToolName {
-		case "Read":
-			if !seen["r:"+detail] {
-				reads = append(reads, detail)
-				seen["r:"+detail] = true
+		for _, r := range e.MatchedRules {
+			if !rulesSeen[r] {
+				rulesSeen[r] = true
+				rules = append(rules, r)
 			}
-		case "Write":
-			if !seen["w:"+detail] {
-				writes = append(writes, detail)
-				seen["w:"+detail] = true
-			}
-		case "Edit":
-			if !seen["e:"+detail] {
-				edits = append(edits, detail)
-				seen["e:"+detail] = true
-			}
-		case "Bash":
-			commands = append(commands, detail)
-		case "Grep", "Glob":
-			if !seen["s:"+detail] {
-				searches = append(searches, detail)
-				seen["s:"+detail] = true
-			}
-		case "Agent":
-			agents = append(agents, detail)
 		}
 	}
 
-	// Build narrative — user request first, then agent response, then actions
+	// Build narrative — conversational content only
 	for _, p := range prompts {
 		fmt.Fprintf(&b, "User: %s\n", p)
 	}
@@ -339,36 +312,11 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 	if len(responses) > 0 {
 		b.WriteString("\n")
 	}
-	if len(reads) > 0 {
-		b.WriteString("Read: ")
-		b.WriteString(strings.Join(reads, ", "))
-		b.WriteString("\n")
+	if toolCount > 0 {
+		fmt.Fprintf(&b, "Tool calls: %d\n", toolCount)
 	}
-	if len(searches) > 0 {
-		b.WriteString("Searched: ")
-		b.WriteString(strings.Join(searches, "; "))
-		b.WriteString("\n")
-	}
-	if len(edits) > 0 {
-		b.WriteString("Edited: ")
-		b.WriteString(strings.Join(edits, ", "))
-		b.WriteString("\n")
-	}
-	if len(writes) > 0 {
-		b.WriteString("Wrote: ")
-		b.WriteString(strings.Join(writes, ", "))
-		b.WriteString("\n")
-	}
-	if len(commands) > 0 {
-		b.WriteString("Ran:\n")
-		for _, cmd := range commands {
-			fmt.Fprintf(&b, "  $ %s\n", cmd)
-		}
-	}
-	if len(agents) > 0 {
-		b.WriteString("Sub-agents: ")
-		b.WriteString(strings.Join(agents, "; "))
-		b.WriteString("\n")
+	if len(rules) > 0 {
+		fmt.Fprintf(&b, "Rules: %s\n", strings.Join(rules, ", "))
 	}
 	if len(denied) > 0 {
 		b.WriteString("Denied: ")
@@ -376,22 +324,12 @@ func (idx *SessionIndexer) formatEventsAsText(events []Event, hookEvent *protoco
 		b.WriteString("\n")
 	}
 	if hasContext {
-		b.WriteString("Context was injected from RAG/rules\n")
+		b.WriteString("Context injected: yes\n")
 	}
 
 	result := b.String()
-	// Skip empty turns (only header, no actions)
-	if !strings.Contains(result, "\n\n") {
-		return ""
-	}
-	lines := strings.Split(result, "\n")
-	contentLines := 0
-	for _, l := range lines {
-		if l != "" && !strings.HasPrefix(l, "Project:") && !strings.HasPrefix(l, "Agent:") {
-			contentLines++
-		}
-	}
-	if contentLines == 0 {
+	// Skip empty turns (only header, no conversational content)
+	if len(prompts) == 0 && len(responses) == 0 && len(denied) == 0 {
 		return ""
 	}
 

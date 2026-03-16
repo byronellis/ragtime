@@ -16,6 +16,7 @@ type Event struct {
 	Response     string                       `json:"response,omitempty"`
 	HasContext   bool                         `json:"has_context,omitempty"`
 	Decision     protocol.PermissionDecision  `json:"decision,omitempty"`
+	MatchedRules []string                     `json:"matched_rules,omitempty"`
 }
 
 // Session tracks state for a single agent conversation.
@@ -41,18 +42,19 @@ func NewSession(agent, sessionID string) *Session {
 }
 
 // RecordEvent adds an event to the session history.
-func (s *Session) RecordEvent(eventType, toolName, detail, response string, hasContext bool, decision protocol.PermissionDecision) {
+func (s *Session) RecordEvent(eventType, toolName, detail, response string, hasContext bool, decision protocol.PermissionDecision, matchedRules []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.Events = append(s.Events, Event{
-		Timestamp:  time.Now(),
-		EventType:  eventType,
-		ToolName:   toolName,
-		Detail:     detail,
-		Response:   response,
-		HasContext: hasContext,
-		Decision:   decision,
+		Timestamp:    time.Now(),
+		EventType:    eventType,
+		ToolName:     toolName,
+		Detail:       detail,
+		Response:     response,
+		HasContext:   hasContext,
+		Decision:     decision,
+		MatchedRules: matchedRules,
 	})
 }
 

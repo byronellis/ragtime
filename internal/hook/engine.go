@@ -82,6 +82,7 @@ func (e *Engine) Evaluate(event *protocol.HookEvent) *protocol.HookResponse {
 		}
 
 		e.logger.Debug("rule matched", "rule", rule.Name, "event", event.EventType)
+		resp.MatchedRules = append(resp.MatchedRules, rule.Name)
 
 		for _, action := range rule.Actions {
 			switch action.Type {

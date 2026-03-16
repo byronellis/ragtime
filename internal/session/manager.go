@@ -95,7 +95,7 @@ func (m *Manager) ProcessEvent(event *protocol.HookEvent, resp *protocol.HookRes
 	}
 
 	// Record the event
-	session.RecordEvent(event.EventType, event.ToolName, detail, response, resp.Context != "", resp.PermissionDecision)
+	session.RecordEvent(event.EventType, event.ToolName, detail, response, resp.Context != "", resp.PermissionDecision, resp.MatchedRules)
 
 	return resp
 }

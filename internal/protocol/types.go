@@ -58,6 +58,7 @@ type HookResponse struct {
 	Context            string             `json:"context,omitempty"`
 	PermissionDecision PermissionDecision `json:"permission_decision,omitempty"`
 	DenyReason         string             `json:"deny_reason,omitempty"`
+	MatchedRules       []string           `json:"matched_rules,omitempty"`
 }
 
 // CommandRequest represents a CLI command sent to the daemon (e.g., index, search).
