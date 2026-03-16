@@ -471,7 +471,7 @@ for r in results:
 func TestExecute_ResponseAttrNames(t *testing.T) {
 	rh := newResponseHelper(nil, nil)
 	names := rh.AttrNames()
-	expected := map[string]bool{"inject_context": true, "approve": true, "deny": true, "ask": true, "prompt": true}
+	expected := map[string]bool{"inject_context": true, "approve": true, "deny": true, "ask": true, "prompt": true, "set_output": true, "agent": true}
 	for _, n := range names {
 		if !expected[n] {
 			t.Errorf("unexpected attr: %s", n)
@@ -564,6 +564,94 @@ func TestExecute_InjectInputBadArgs(t *testing.T) {
 	_, err := r.Execute(`inject_input("not a list")`, event)
 	if err == nil {
 		t.Fatal("expected error for non-list arg")
+	}
+}
+
+func TestExecute_SetOutput(t *testing.T) {
+	r := testRunner()
+	event := &protocol.HookEvent{Agent: "claude", EventType: "pre-tool-use"}
+
+	resp, err := r.Execute(`
+response.set_output("customField", "hello")
+response.set_output("nested", {"key": "value", "num": 42})
+`, event)
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+	if resp.OutputOverrides == nil {
+		t.Fatal("expected OutputOverrides to be set")
+	}
+	if resp.OutputOverrides["customField"] != "hello" {
+		t.Errorf("customField = %v, want hello", resp.OutputOverrides["customField"])
+	}
+	nested, ok := resp.OutputOverrides["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("nested = %T, want map", resp.OutputOverrides["nested"])
+	}
+	if nested["key"] != "value" {
+		t.Errorf("nested.key = %v, want value", nested["key"])
+	}
+}
+
+func TestExecute_ResponseAgent(t *testing.T) {
+	r := testRunner()
+	event := &protocol.HookEvent{Agent: "claude", EventType: "pre-tool-use"}
+
+	resp, err := r.Execute(`
+if response.agent == "claude":
+  response.inject_context("agent is claude")
+`, event)
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+	if resp.Context != "agent is claude" {
+		t.Errorf("context = %q, want 'agent is claude'", resp.Context)
+	}
+}
+
+func TestExecute_ResponseAgentEmpty(t *testing.T) {
+	r := testRunner()
+	event := &protocol.HookEvent{EventType: "pre-tool-use"}
+
+	resp, err := r.Execute(`
+if response.agent == "":
+  response.inject_context("no agent")
+`, event)
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+	if resp.Context != "no agent" {
+		t.Errorf("context = %q, want 'no agent'", resp.Context)
+	}
+}
+
+func TestStarlarkToGo(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		key   string
+		want  any
+	}{
+		{"string", `response.set_output("k", "hello")`, "k", "hello"},
+		{"int", `response.set_output("k", 42)`, "k", int64(42)},
+		{"float", `response.set_output("k", 3.14)`, "k", 3.14},
+		{"bool", `response.set_output("k", True)`, "k", true},
+		{"none", `response.set_output("k", None)`, "k", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := testRunner()
+			event := &protocol.HookEvent{EventType: "pre-tool-use"}
+			resp, err := r.Execute(tt.input, event)
+			if err != nil {
+				t.Fatalf("execute error: %v", err)
+			}
+			got := resp.OutputOverrides[tt.key]
+			if got != tt.want {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
 	}
 }
 

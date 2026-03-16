@@ -61,6 +61,7 @@ type HookResponse struct {
 	PermissionDecision PermissionDecision `json:"permission_decision,omitempty"`
 	DenyReason         string             `json:"deny_reason,omitempty"`
 	MatchedRules       []string           `json:"matched_rules,omitempty"`
+	OutputOverrides    map[string]any     `json:"output_overrides,omitempty"` // raw key-values merged into agent output
 }
 
 // CommandRequest represents a CLI command sent to the daemon (e.g., index, search).

@@ -49,12 +49,111 @@ The hook event that triggered this rule.
 
 Mutable helper for building the hook response. Multiple calls accumulate (context is joined with `---` separators). Permission decisions use last-write-wins within a single script.
 
+#### Permission Control
+
 | Method | Description |
 |--------|-------------|
-| `response.inject_context(text)` | Add context that will be shown to the agent |
 | `response.approve()` | Auto-approve the tool call (no human confirmation) |
 | `response.deny(reason="")` | Block the tool call with an optional reason |
 | `response.ask()` | Defer to the human (TUI prompt or agent default) |
+
+#### Context Injection
+
+| Method | Description |
+|--------|-------------|
+| `response.inject_context(text)` | Add context that will be shown to the agent |
+
+#### Agent Info
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `response.agent` | `string` | The agent platform handling this event (`"claude"`, `"gemini"`, etc.). Use this to branch on agent-specific behavior. |
+
+```python
+if response.agent == "claude":
+    response.inject_context("Claude-specific guidance here.")
+```
+
+#### Interactive Prompts
+
+| Method | Description |
+|--------|-------------|
+| `response.prompt(text, type="ok_cancel", default="cancel", timeout=30)` | Show an interactive prompt in the TUI and block until the user responds or timeout expires. |
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `text` | `string` | required | Prompt text (markdown supported) |
+| `type` | `string` | `"ok_cancel"` | One of `"ok_cancel"`, `"approve_deny_cancel"`, or `"freeform"` |
+| `default` | `string` | `"cancel"` | Value returned on timeout |
+| `timeout` | `int` | `30` | Seconds before auto-responding with default |
+
+**Returns:** A string with the user's choice (`"ok"`, `"cancel"`, `"approve"`, `"deny"`, or freeform text).
+
+The timer starts when the prompt is displayed in the TUI, not when it's enqueued. If no TUI is connected, the prompt is queued until one connects (or times out with the default).
+
+```python
+answer = response.prompt(
+    text="**Dangerous command detected:**\n\n`" + event.tool_input["command"] + "`\n\nAllow execution?",
+    type="approve_deny_cancel",
+    default="deny",
+    timeout=15,
+)
+if answer == "approve":
+    response.approve()
+elif answer == "deny":
+    response.deny("User denied the command")
+```
+
+#### Raw Output Control
+
+| Method | Description |
+|--------|-------------|
+| `response.set_output(key, value)` | Set an arbitrary key-value pair in the agent output JSON. |
+
+Values can be strings, numbers, bools, lists, or dicts. These are merged into the top-level agent output alongside the standard fields. Use this for:
+
+- Agent-specific output fields the standard API doesn't cover
+- Debugging hooks by adding metadata
+- Overriding the standard formatted output when full control is needed
+
+```python
+# Add custom metadata alongside standard output
+response.inject_context("Be careful with this command.")
+response.set_output("debugInfo", {
+    "rule": "my-rule",
+    "agent": response.agent,
+})
+
+# Override agent-specific output entirely (advanced)
+if response.agent == "claude":
+    response.set_output("hookSpecificOutput", {
+        "hookEventName": "PreToolUse",
+        "additionalContext": "Custom context",
+        "permissionDecision": "allow",
+    })
+```
+
+### `inject_input`
+
+Send key sequences to the terminal multiplexer (tmux or screen). Useful for automating responses to interactive prompts from tools.
+
+```python
+inject_input([
+    {"keys": "y", "delay_ms": 100},
+    {"keys": "Enter"},
+])
+```
+
+Each item in the list is a dict with:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `keys` | `string` | Key sequence to send |
+| `delay_ms` | `int` | Optional delay in milliseconds after sending |
+
+Requires a detected terminal multiplexer (tmux via `$TMUX`/`$TMUX_PANE`, or screen via `$STY`). Returns an error if no multiplexer is found.
 
 ### `rag`
 
@@ -91,6 +190,102 @@ Print to the daemon log (slog INFO level).
 ```python
 log("processing", event.tool_name, "for", event.agent)
 ```
+
+## Testing Rules
+
+The `rt hook --test` command runs the hook engine locally without a daemon, making it easy to develop and debug rules.
+
+### Basic Usage
+
+```bash
+# Synthetic event from flags (defaults to agent=claude, event=pre-tool-use)
+rt hook --test --tool Bash --input '{"command":"rm -rf /"}'
+
+# Pipe agent-format JSON (same format Claude Code sends on stdin)
+echo '{"tool_name":"Read","tool_input":{"file_path":"/etc/passwd"}}' | rt hook --test
+
+# Override agent and event type
+rt hook --test --agent gemini --event post-tool-use --tool Bash
+```
+
+### Testing Specific Rules
+
+Use `--rule` to test specific rule files instead of loading from config directories. The flag is repeatable — use it multiple times to test how rules interact:
+
+```bash
+# Test a single rule
+rt hook --test --tool Bash --input '{"command":"ls"}' --rule my-rule.yaml
+
+# Test interaction between multiple rules
+rt hook --test --tool Bash --input '{"command":"rm -rf /"}' \
+  --rule deny-dangerous.yaml --rule inject-warning.yaml
+```
+
+Without `--rule`, rules are loaded from the standard locations (`~/.ragtime/rules/`, `.ragtime/rules/`, and config file).
+
+### Verbose Output
+
+`--verbose` shows per-rule match/skip details:
+
+```bash
+rt hook --test --tool Bash --input '{"command":"ls"}' --rule my-rule.yaml --verbose
+```
+
+```
+=== Hook Test ===
+Event:  pre-tool-use / Bash (ls)
+Agent:  claude
+Rules:  2 loaded
+Time:   340µs
+
+Matched rules: inject-warning
+Permission:    (none)
+
+--- Injected Context ---
+Remember: always review bash commands carefully.
+
+--- Agent Output (claude) ---
+{
+  "hookSpecificOutput": {
+    "additionalContext": "Remember: always review bash commands carefully.",
+    "hookEventName": "PreToolUse"
+  }
+}
+
+--- Rule Details ---
+  [SKIP] deny-dangerous  event=pre-tool-use  tool=Bash
+  [MATCH] inject-warning  tool=Bash
+```
+
+### Interactive TUI Testing
+
+Use `--tui` to launch actual TUI modals when a rule calls `response.prompt()`. This shows the exact modal that would appear in the ragtime dashboard:
+
+```bash
+rt hook --test --tui --tool Bash --input '{"command":"rm -rf /"}' --rule confirm-bash.yaml
+```
+
+The modal supports:
+- Tab/arrow keys to switch between buttons
+- Enter to confirm selection
+- Escape to cancel
+- Countdown timer with auto-response on timeout
+- Freeform text input (for `type="freeform"` prompts)
+
+Without `--tui`, prompts fall back to plain text on stderr (or return the default value if stdin is not a terminal).
+
+### Test Mode Flags
+
+| Flag | Description |
+|------|-------------|
+| `--test` | Enable test mode (run locally, no daemon) |
+| `--tool NAME` | Tool name for the synthetic event |
+| `--input JSON` | JSON object for tool_input |
+| `--agent NAME` | Agent platform (default: `claude`) |
+| `--event TYPE` | Event type (default: `pre-tool-use`) |
+| `--rule FILE` | Rule YAML file to test (repeatable, replaces config dir loading) |
+| `--tui` | Show interactive TUI modals for `response.prompt()` calls |
+| `--verbose` | Show per-rule match details and agent output |
 
 ## Sandbox Limits
 

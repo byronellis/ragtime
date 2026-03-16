@@ -96,6 +96,7 @@ func ClaudePreToolUseResponse(resp *protocol.HookResponse) map[string]any {
 		output["hookSpecificOutput"] = hookOutput
 	}
 
+	mergeOverrides(output, resp.OutputOverrides)
 	return output
 }
 
@@ -109,6 +110,7 @@ func ClaudePostToolUseResponse(resp *protocol.HookResponse) map[string]any {
 		}
 		output["hookSpecificOutput"] = hookOutput
 	}
+	mergeOverrides(output, resp.OutputOverrides)
 	return output
 }
 
@@ -122,6 +124,7 @@ func ClaudeStopResponse(resp *protocol.HookResponse) map[string]any {
 		}
 		output["hookSpecificOutput"] = hookOutput
 	}
+	mergeOverrides(output, resp.OutputOverrides)
 	return output
 }
 
@@ -136,14 +139,22 @@ func FormatClaudeResponse(resp *protocol.HookResponse, eventType string) map[str
 		return ClaudeStopResponse(resp)
 	default:
 		// Generic: just include context if present
+		output := map[string]any{}
 		if resp.Context != "" {
-			return map[string]any{
-				"hookSpecificOutput": map[string]any{
-					"additionalContext": resp.Context,
-				},
+			output["hookSpecificOutput"] = map[string]any{
+				"additionalContext": resp.Context,
 			}
 		}
-		return map[string]any{}
+		mergeOverrides(output, resp.OutputOverrides)
+		return output
+	}
+}
+
+// mergeOverrides copies OutputOverrides into the agent output map.
+// Keys are merged at the top level so Starlark rules can set arbitrary fields.
+func mergeOverrides(output map[string]any, overrides map[string]any) {
+	for k, v := range overrides {
+		output[k] = v
 	}
 }
 

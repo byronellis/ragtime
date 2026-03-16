@@ -153,6 +153,12 @@ func (e *Engine) Evaluate(event *protocol.HookEvent) *protocol.HookResponse {
 					resp.PermissionDecision = result.PermissionDecision
 					resp.DenyReason = result.DenyReason
 				}
+				for k, v := range result.OutputOverrides {
+					if resp.OutputOverrides == nil {
+						resp.OutputOverrides = make(map[string]any)
+					}
+					resp.OutputOverrides[k] = v
+				}
 
 			case "log":
 				e.logger.Info("hook event (log action)",

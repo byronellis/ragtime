@@ -72,14 +72,47 @@ func goToStarlark(v any) starlark.Value {
 	}
 }
 
+func starlarkToGo(v starlark.Value) any {
+	switch val := v.(type) {
+	case starlark.String:
+		return string(val)
+	case starlark.Int:
+		i, _ := val.Int64()
+		return i
+	case starlark.Float:
+		return float64(val)
+	case starlark.Bool:
+		return bool(val)
+	case *starlark.List:
+		items := make([]any, val.Len())
+		for i := 0; i < val.Len(); i++ {
+			items[i] = starlarkToGo(val.Index(i))
+		}
+		return items
+	case *starlark.Dict:
+		m := make(map[string]any)
+		for _, item := range val.Items() {
+			if key, ok := item[0].(starlark.String); ok {
+				m[string(key)] = starlarkToGo(item[1])
+			}
+		}
+		return m
+	case starlark.NoneType:
+		return nil
+	default:
+		return val.String()
+	}
+}
+
 // --- response helper ---
 
 type responseHelper struct {
-	context    []string
-	decision   protocol.PermissionDecision
-	denyReason string
-	interactor Interactor
-	event      *protocol.HookEvent
+	context         []string
+	decision        protocol.PermissionDecision
+	denyReason      string
+	outputOverrides map[string]any
+	interactor      Interactor
+	event           *protocol.HookEvent
 }
 
 func newResponseHelper(interactor Interactor, event *protocol.HookEvent) *responseHelper {
@@ -93,6 +126,7 @@ func (rh *responseHelper) toResponse() *protocol.HookResponse {
 	resp := &protocol.HookResponse{
 		PermissionDecision: rh.decision,
 		DenyReason:         rh.denyReason,
+		OutputOverrides:    rh.outputOverrides,
 	}
 	if len(rh.context) > 0 {
 		resp.Context = strings.Join(rh.context, "\n\n---\n\n")
@@ -109,7 +143,7 @@ func (rh *responseHelper) Truth() starlark.Bool   { return true }
 func (rh *responseHelper) Hash() (uint32, error)  { return 0, fmt.Errorf("unhashable") }
 
 func (rh *responseHelper) AttrNames() []string {
-	return []string{"inject_context", "approve", "deny", "ask", "prompt"}
+	return []string{"inject_context", "approve", "deny", "ask", "prompt", "set_output", "agent"}
 }
 
 func (rh *responseHelper) Attr(name string) (starlark.Value, error) {
@@ -124,6 +158,13 @@ func (rh *responseHelper) Attr(name string) (starlark.Value, error) {
 		return starlark.NewBuiltin("response.ask", rh.ask), nil
 	case "prompt":
 		return starlark.NewBuiltin("response.prompt", rh.promptBuiltin), nil
+	case "set_output":
+		return starlark.NewBuiltin("response.set_output", rh.setOutput), nil
+	case "agent":
+		if rh.event != nil {
+			return starlark.String(rh.event.Agent), nil
+		}
+		return starlark.String(""), nil
 	default:
 		return nil, nil
 	}
@@ -150,6 +191,19 @@ func (rh *responseHelper) deny(_ *starlark.Thread, _ *starlark.Builtin, args sta
 	}
 	rh.decision = protocol.PermDeny
 	rh.denyReason = reason
+	return starlark.None, nil
+}
+
+func (rh *responseHelper) setOutput(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var key string
+	var value starlark.Value
+	if err := starlark.UnpackPositionalArgs("set_output", args, kwargs, 2, &key, &value); err != nil {
+		return nil, err
+	}
+	if rh.outputOverrides == nil {
+		rh.outputOverrides = make(map[string]any)
+	}
+	rh.outputOverrides[key] = starlarkToGo(value)
 	return starlark.None, nil
 }
 

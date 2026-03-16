@@ -20,6 +20,7 @@ import (
 	"github.com/byronellis/ragtime/internal/rag"
 	"github.com/byronellis/ragtime/internal/rag/providers"
 	ragstarlark "github.com/byronellis/ragtime/internal/starlark"
+	ragtui "github.com/byronellis/ragtime/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -37,6 +38,7 @@ func newHookCmd() *cobra.Command {
 	cmd.Flags().String("tool", "", "tool name for synthetic events (test mode only)")
 	cmd.Flags().String("input", "", "JSON object for tool_input (test mode only)")
 	cmd.Flags().StringArray("rule", nil, "path to a rule YAML file (repeatable, test mode only)")
+	cmd.Flags().Bool("tui", false, "show interactive TUI modals for response.prompt() calls (test mode only)")
 	cmd.Flags().Bool("verbose", false, "show detailed rule matching info (test mode only)")
 
 	return cmd
@@ -153,6 +155,7 @@ func runHookTest(cmd *cobra.Command) error {
 	toolName, _ := cmd.Flags().GetString("tool")
 	inputJSON, _ := cmd.Flags().GetString("input")
 	rulePaths, _ := cmd.Flags().GetStringArray("rule")
+	useTUI, _ := cmd.Flags().GetBool("tui")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
 	// Defaults for test mode
@@ -204,7 +207,11 @@ func runHookTest(cmd *cobra.Command) error {
 
 	// Wire up Starlark runner with CLI interactor for prompts
 	starlarkRunner := ragstarlark.NewRunner(ragEngine, nil, logger)
-	starlarkRunner.SetInteractor(&cliInteractor{})
+	if useTUI {
+		starlarkRunner.SetInteractor(&ragtui.TestInteractor{})
+	} else {
+		starlarkRunner.SetInteractor(&cliInteractor{})
+	}
 	engine.SetScripts(starlarkRunner)
 
 	// Run evaluation
@@ -215,18 +222,16 @@ func runHookTest(cmd *cobra.Command) error {
 	// Print results
 	printTestResults(event, resp, rules, elapsed, verbose)
 
-	// Also print agent-formatted output
-	if verbose {
-		var agentOutput any
-		switch agent {
-		case "claude":
-			agentOutput = adapters.FormatClaudeResponse(resp, eventType)
-		}
-		if agentOutput != nil {
-			data, _ := json.MarshalIndent(agentOutput, "", "  ")
-			if string(data) != "{}" {
-				fmt.Fprintf(os.Stderr, "\n--- Agent Output ---\n%s\n", data)
-			}
+	// Always show agent-formatted output in test mode
+	var agentOutput any
+	switch agent {
+	case "claude":
+		agentOutput = adapters.FormatClaudeResponse(resp, eventType)
+	}
+	if agentOutput != nil {
+		data, _ := json.MarshalIndent(agentOutput, "", "  ")
+		if string(data) != "{}" {
+			fmt.Printf("\n--- Agent Output (%s) ---\n%s\n", agent, data)
 		}
 	}
 
@@ -235,6 +240,25 @@ func runHookTest(cmd *cobra.Command) error {
 
 // buildTestEvent constructs a HookEvent from stdin or flags.
 func buildTestEvent(cmd *cobra.Command, agent, eventType, toolName, inputJSON string) (*protocol.HookEvent, error) {
+	// If --tool flag is set, prefer synthetic event over stdin
+	if toolName != "" {
+		event := &protocol.HookEvent{
+			Agent:     agent,
+			EventType: eventType,
+			SessionID: "test",
+			ToolName:  toolName,
+			CWD:       mustGetwd(),
+		}
+		if inputJSON != "" {
+			var toolInput map[string]any
+			if err := json.Unmarshal([]byte(inputJSON), &toolInput); err != nil {
+				return nil, fmt.Errorf("parse --input JSON: %w", err)
+			}
+			event.ToolInput = toolInput
+		}
+		return event, nil
+	}
+
 	// Check if stdin has data (not a terminal)
 	stat, _ := os.Stdin.Stat()
 	hasPipe := (stat.Mode() & os.ModeCharDevice) == 0
@@ -272,28 +296,8 @@ func buildTestEvent(cmd *cobra.Command, agent, eventType, toolName, inputJSON st
 		return &event, nil
 	}
 
-	// No stdin — build synthetic event from flags
-	if toolName == "" {
-		return nil, fmt.Errorf("provide event JSON on stdin or use --tool to create a synthetic event")
-	}
-
-	event := &protocol.HookEvent{
-		Agent:     agent,
-		EventType: eventType,
-		SessionID: "test",
-		ToolName:  toolName,
-		CWD:       mustGetwd(),
-	}
-
-	if inputJSON != "" {
-		var toolInput map[string]any
-		if err := json.Unmarshal([]byte(inputJSON), &toolInput); err != nil {
-			return nil, fmt.Errorf("parse --input JSON: %w", err)
-		}
-		event.ToolInput = toolInput
-	}
-
-	return event, nil
+	// No stdin and no --tool flag
+	return nil, fmt.Errorf("provide event JSON on stdin or use --tool to create a synthetic event")
 }
 
 func mustGetwd() string {
