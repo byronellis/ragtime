@@ -39,15 +39,25 @@ func NewModel(client *Client, info *protocol.SubscribeResponse) Model {
 
 // Init starts the event read loop.
 func (m Model) Init() tea.Cmd {
-	return func() tea.Msg {
-		return nil
-	}
+	return tea.Batch(
+		func() tea.Msg { return nil },
+		uptimeTickCmd(),
+	)
 }
 
 // interactionTickCmd returns a command that fires a tick after one second.
 func interactionTickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg {
 		return InteractionTickMsg{}
+	})
+}
+
+// UptimeTickMsg triggers a periodic redraw to keep the uptime timer current.
+type UptimeTickMsg struct{}
+
+func uptimeTickCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg {
+		return UptimeTickMsg{}
 	})
 }
 
@@ -137,6 +147,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		modal := NewInteractionModal(msg.Request, m.width, m.height)
 		m.interaction = &modal
 		return m, interactionTickCmd()
+
+	case UptimeTickMsg:
+		return m, uptimeTickCmd()
 
 	case DisconnectedMsg:
 		m.connected = false
