@@ -232,18 +232,20 @@ Ragtime is in active early development — functional but not yet stable.
 | Starlark scripting | Working | Full scripting in rule actions — conditionals, event inspection, response control |
 | RAG indexing | Working | Ollama-backed embeddings, per-collection chunking and search |
 | Session indexing | Working | Automatic session capture, chunked and indexed for cross-session search |
-| TUI dashboard | Working | Live event feed, session panel, interaction modals (approve/deny/cancel) |
+| TUI dashboard | Working | Live event feed, session panel, interaction modals (approve/deny/cancel), uptime ticker |
 | Hook test mode | Working | `rt hook --test` for local rule development without a daemon |
-| Permission requests | Working | `PermissionRequest` event support with TUI-based approval flow |
+| Permission requests | Working | `PermissionRequest` event support with TUI-based approval flow and auto-approve countdown |
 | Markdown rendering | Working | Glamour-based rendering in TUI modals |
+| Hot reload | Working | Rule changes take effect immediately without daemon restart |
 | Multi-agent support | Partial | Hook relay works with any agent; Starlark `response.agent` exposes platform name. Session capture tested with Claude Code only |
 
 ### What's next
 
-- Curated session summaries (compress session chunks to save space)
-- Time-range and project-scoped search
-- Session summary on connect
-- Agent note-taking (`rt add` from Starlark)
+- Session summary on connect — auto-inject recent session context when a new conversation starts
+- Project-scoped search — filter `rt search sessions` by project/repo to reduce noise
+- Agent note-taking — `rt note` or `rt add` from Starlark to leave breadcrumbs for future sessions
+- Curated session summaries — compress session chunks to save index space
+- Rule hit analytics — see which rules fire most often to help tune configurations
 - More example rules and cookbook patterns
 - Stability, error handling, and documentation polish
 
