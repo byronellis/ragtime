@@ -150,10 +150,13 @@ func (f EventFeed) renderEvent(event protocol.StreamEvent) string {
 	}
 	detailStr := eventDetailStyle.Render(detail)
 
+	var line string
 	if tool == "" {
-		return fmt.Sprintf("%s %s %s", ts, tag, detailStr)
+		line = fmt.Sprintf("%s %s %s", ts, tag, detailStr)
+	} else {
+		line = fmt.Sprintf("%s %s %s %s", ts, tag, toolStr, detailStr)
 	}
-	return fmt.Sprintf("%s %s %s %s", ts, tag, toolStr, detailStr)
+	return strings.TrimRight(line, "\n")
 }
 
 // eventTag returns a styled short label for the event type.
@@ -173,6 +176,8 @@ func eventTag(eventType string) string {
 		return eventTagSessionStyle.Render("SESS")
 	case "subagent-stop":
 		return eventTagPostStyle.Render("SUB")
+	case "permission-request":
+		return eventTagDimStyle.Render("PERM")
 	default:
 		return eventTagDimStyle.Render(strings.ToUpper(eventType))
 	}
