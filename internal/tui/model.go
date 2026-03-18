@@ -115,6 +115,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.search != nil {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
+			// Always handle escape and quit at the model level
+			switch msg.String() {
+			case "escape":
+				m.search = nil
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			}
 			panel, cmd, done := m.search.Update(msg)
 			if done {
 				m.search = nil
