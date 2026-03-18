@@ -133,4 +133,29 @@ var (
 	modalTimerStyle = lipgloss.NewStyle().
 			Foreground(colorYellow).
 			Italic(true)
+
+	// Search panel
+	searchBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorCyan).
+			Padding(1, 2)
+
+	searchTitleStyle = lipgloss.NewStyle().
+				Foreground(colorCyan).
+				Bold(true)
+
+	searchDimStyle = lipgloss.NewStyle().
+			Foreground(colorDim)
+
+	searchErrorStyle = lipgloss.NewStyle().
+				Foreground(colorRed)
+
+	searchMetaStyle = lipgloss.NewStyle().
+			Foreground(colorBlue)
+
+	searchContentStyle = lipgloss.NewStyle().
+				Foreground(colorWhite)
+
+	searchHelpStyle = lipgloss.NewStyle().
+			Foreground(colorDim)
 )

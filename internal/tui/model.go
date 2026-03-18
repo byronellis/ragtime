@@ -16,6 +16,7 @@ type Model struct {
 	eventFeed     EventFeed
 	helpBar       HelpBar
 	interaction   *InteractionModal
+	search        *SearchPanel
 	connected     bool
 	disconnectErr error
 	width         int
@@ -110,11 +111,64 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// When search panel is active, route input to it
+	if m.search != nil {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			panel, cmd, done := m.search.Update(msg)
+			if done {
+				m.search = nil
+				return m, nil
+			}
+			m.search = &panel
+			return m, cmd
+
+		case SearchRequestMsg:
+			return m, searchCmd(m.client, msg.Query)
+
+		case SearchResultMsg:
+			if m.search != nil {
+				panel, _, _ := m.search.Update(msg)
+				m.search = &panel
+			}
+			return m, nil
+
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+			m.recalcLayout()
+			if m.search != nil {
+				m.search.SetSize(m.width, m.height)
+			}
+			return m, nil
+
+		case EventMsg:
+			if msg.Event.Event != nil {
+				m.eventFeed.Push(msg.Event)
+			}
+			m.sessionsPanel.Update(msg.Event)
+			m.statusBar.SetSessions(m.sessionsPanel.Count())
+			m.updateProject(msg.Event)
+			return m, nil
+
+		case DisconnectedMsg:
+			m.connected = false
+			m.disconnectErr = msg.Err
+			m.search = nil
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "/":
+			panel := NewSearchPanel(m.width, m.height)
+			m.search = &panel
+			return m, nil
 		case "j", "down":
 			m.eventFeed.ScrollDown(1)
 		case "k", "up":
@@ -218,9 +272,12 @@ func (m Model) feedHeight() int {
 
 // View renders the full TUI.
 func (m Model) View() string {
-	// Modal overlay takes over the entire screen
+	// Modal overlays take over the entire screen
 	if m.interaction != nil {
 		return m.interaction.View()
+	}
+	if m.search != nil {
+		return m.search.View()
 	}
 
 	var status string

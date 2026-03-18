@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -27,8 +28,10 @@ type DisconnectedMsg struct {
 
 // Client manages the connection to the ragtime daemon.
 type Client struct {
-	conn    net.Conn
-	writeMu sync.Mutex
+	conn      net.Conn
+	writeMu   sync.Mutex
+	cmdMu     sync.Mutex             // serializes command requests
+	cmdRespCh chan *protocol.Envelope // receives command responses from ReadLoop
 }
 
 // Connect dials the daemon socket and performs the subscribe handshake.
@@ -68,7 +71,7 @@ func Connect(socketPath string) (*Client, *protocol.SubscribeResponse, error) {
 		return nil, nil, fmt.Errorf("subscribe failed: %s", resp.Error)
 	}
 
-	return &Client{conn: conn}, &resp, nil
+	return &Client{conn: conn, cmdRespCh: make(chan *protocol.Envelope, 1)}, &resp, nil
 }
 
 // ReadLoop reads stream events from the daemon and sends them as tea messages.
@@ -95,7 +98,48 @@ func (c *Client) ReadLoop(p *tea.Program) {
 			}
 
 			p.Send(EventMsg{Event: event})
+
+		case protocol.MsgCommand:
+			// Route command response to waiting SendCommand call
+			select {
+			case c.cmdRespCh <- env:
+			default:
+				// No one waiting, discard
+			}
 		}
+	}
+}
+
+// SendCommand sends a command request to the daemon and waits for the response.
+// It is safe to call from any goroutine, including a tea.Cmd.
+func (c *Client) SendCommand(cmd string, args map[string]any) (*protocol.CommandResponse, error) {
+	c.cmdMu.Lock()
+	defer c.cmdMu.Unlock()
+
+	env, err := protocol.NewEnvelope(protocol.MsgCommand, &protocol.CommandRequest{
+		Command: cmd,
+		Args:    args,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	c.writeMu.Lock()
+	err = protocol.WriteMessage(c.conn, env)
+	c.writeMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	select {
+	case respEnv := <-c.cmdRespCh:
+		var resp protocol.CommandResponse
+		if err := respEnv.DecodePayload(&resp); err != nil {
+			return nil, err
+		}
+		return &resp, nil
+	case <-time.After(10 * time.Second):
+		return nil, fmt.Errorf("command timeout")
 	}
 }
 

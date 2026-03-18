@@ -19,6 +19,7 @@ func (h HelpBar) View() string {
 		{"j/k", "scroll"},
 		{"G", "bottom"},
 		{"g", "top"},
+		{"/", "search"},
 	}
 
 	var content string

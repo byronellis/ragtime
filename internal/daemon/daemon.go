@@ -28,6 +28,7 @@ type Daemon struct {
 	engine    *hook.Engine
 	sessions  *session.Manager
 	indexer   *session.SessionIndexer
+	rag       *rag.Engine
 	bus       *bus.Bus
 	subs         *SubscriptionManager
 	interactions *InteractionManager
@@ -81,6 +82,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// Initialize RAG engine and connect to hook engine
 	ragEngine := d.initRAG()
+	d.rag = ragEngine
 	if ragEngine != nil {
 		d.engine.SetRAG(ragEngine)
 	}

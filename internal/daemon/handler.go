@@ -76,9 +76,45 @@ func (h *Handler) handleCommand(env *protocol.Envelope) (*protocol.Envelope, err
 
 	h.daemon.logger.Info("command", "command", cmd.Command)
 
-	resp := &protocol.CommandResponse{
-		Success: false,
-		Error:   fmt.Sprintf("command %q not yet implemented", cmd.Command),
+	switch cmd.Command {
+	case "search":
+		return h.handleSearch(cmd.Args)
+	default:
+		resp := &protocol.CommandResponse{
+			Success: false,
+			Error:   fmt.Sprintf("command %q not yet implemented", cmd.Command),
+		}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
 	}
+}
+
+func (h *Handler) handleSearch(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.rag == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "RAG engine not available"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	collection, _ := args["collection"].(string)
+	query, _ := args["query"].(string)
+	if collection == "" {
+		collection = "sessions"
+	}
+	if query == "" {
+		resp := &protocol.CommandResponse{Success: false, Error: "query is required"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	topK := 10
+	if v, ok := args["top_k"].(float64); ok && v > 0 {
+		topK = int(v)
+	}
+
+	results, err := h.daemon.rag.Search(collection, query, topK)
+	if err != nil {
+		resp := &protocol.CommandResponse{Success: false, Error: err.Error()}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	resp := &protocol.CommandResponse{Success: true, Data: results}
 	return protocol.NewEnvelope(protocol.MsgCommand, resp)
 }
