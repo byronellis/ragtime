@@ -82,7 +82,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case EventMsg:
-			m.eventFeed.Push(msg.Event)
+			if msg.Event.Event != nil {
+				m.eventFeed.Push(msg.Event)
+			}
 			m.sessionsPanel.Update(msg.Event)
 			m.statusBar.SetSessions(m.sessionsPanel.Count())
 			m.updateProject(msg.Event)
@@ -123,7 +125,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recalcLayout()
 
 	case EventMsg:
-		m.eventFeed.Push(msg.Event)
+		if msg.Event.Event != nil {
+			m.eventFeed.Push(msg.Event)
+		}
 		m.sessionsPanel.Update(msg.Event)
 		m.statusBar.SetSessions(m.sessionsPanel.Count())
 		m.updateProject(msg.Event)

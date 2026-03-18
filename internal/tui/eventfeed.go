@@ -156,7 +156,7 @@ func (f EventFeed) renderEvent(event protocol.StreamEvent) string {
 	} else {
 		line = fmt.Sprintf("%s %s %s %s", ts, tag, toolStr, detailStr)
 	}
-	return strings.TrimRight(line, "\n")
+	return line
 }
 
 // eventTag returns a styled short label for the event type.
