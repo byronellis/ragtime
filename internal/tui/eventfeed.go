@@ -136,8 +136,8 @@ func (f EventFeed) renderEvent(event protocol.StreamEvent) string {
 	}
 	toolStr := eventToolStyle.Render(tool)
 
-	// Detail content
-	detail := eventDetail(e)
+	// Detail content (strip newlines — events are single-line in the feed)
+	detail := strings.ReplaceAll(eventDetail(e), "\n", " ")
 
 	// Truncate detail to fit width
 	// time(8) + tag(6) + tool(8) + spaces(4) = ~26 chars overhead

@@ -1,0 +1,31 @@
+# Review permission requests interactively via TUI modal.
+# Matches Claude Code's PermissionRequest event, which fires when the agent's
+# built-in permission system would prompt the user for approval.
+name: review-permission
+match:
+  event: permission-request
+actions:
+  - type: starlark
+    script: |
+      tool = event.tool_name
+      cmd = event.tool_input.get("command", "")
+      path = event.tool_input.get("file_path", "")
+
+      detail = cmd if cmd else path
+      if detail:
+          text = "## Permission Request\n\n**Tool:** `" + tool + "`\n\n```\n" + detail + "\n```\n\nAllow this?"
+      else:
+          text = "## Permission Request\n\n**Tool:** `" + tool + "`\n\nAllow this?"
+
+      if tui.connected():
+          answer = response.prompt(
+              text=text,
+              type="approve_deny_cancel",
+              default="deny",
+              timeout=30,
+          )
+          if answer == "approve":
+              response.approve()
+          elif answer == "deny":
+              response.deny("denied via TUI review")
+      # If no TUI, fall through to agent's default behavior

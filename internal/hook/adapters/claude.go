@@ -138,12 +138,13 @@ func ClaudePermissionRequestResponse(resp *protocol.HookResponse) map[string]any
 
 	switch resp.PermissionDecision {
 	case protocol.PermAllow:
-		hookOutput["behavior"] = "allow"
+		hookOutput["decision"] = map[string]any{"behavior": "allow"}
 	case protocol.PermDeny:
-		hookOutput["behavior"] = "deny"
+		decision := map[string]any{"behavior": "deny"}
 		if resp.DenyReason != "" {
-			hookOutput["message"] = resp.DenyReason
+			decision["message"] = resp.DenyReason
 		}
+		hookOutput["decision"] = decision
 	}
 
 	if len(hookOutput) > 1 {

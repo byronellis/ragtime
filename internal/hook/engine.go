@@ -24,6 +24,7 @@ type SearchResult struct {
 // ScriptRunner executes Starlark scripts for hook actions.
 type ScriptRunner interface {
 	Execute(script string, event *protocol.HookEvent) (*protocol.HookResponse, error)
+	ClearCache()
 }
 
 // Engine evaluates hook events against rules and produces responses.
@@ -58,10 +59,14 @@ func (e *Engine) SetScripts(runner ScriptRunner) {
 }
 
 // SetRules replaces the current rule set (used by hot reload).
+// Also clears the Starlark script cache so changed scripts take effect immediately.
 func (e *Engine) SetRules(rules []config.RuleConfig) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.rules = rules
+	if e.scripts != nil {
+		e.scripts.ClearCache()
+	}
 	e.logger.Info("rules reloaded", "count", len(rules))
 }
 

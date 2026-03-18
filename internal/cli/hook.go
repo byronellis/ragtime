@@ -67,6 +67,14 @@ func runHookLive(cmd *cobra.Command) error {
 		return fmt.Errorf("read stdin: %w", err)
 	}
 
+	// Debug: log raw stdin to file for troubleshooting
+	if f, err := os.OpenFile(filepath.Join(project.GlobalDir(), "hook-stdin.log"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+		fmt.Fprintf(f, "[%s] agent=%s event=%s stdin=%s\n",
+			time.Now().Format(time.RFC3339), agent, eventType, string(stdinData))
+		f.Close()
+	}
+
 	// Parse into universal event based on agent type
 	var event *protocol.HookEvent
 	switch agent {
@@ -103,8 +111,14 @@ func runHookLive(cmd *cobra.Command) error {
 	}
 	defer conn.Close()
 
-	// Set deadline for the entire exchange
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	// Set deadline for the entire exchange.
+	// Interactive events (permission-request) may block on TUI modals,
+	// so allow a longer deadline for those.
+	deadline := 5 * time.Second
+	if eventType == "permission-request" || eventType == "pre-tool-use" {
+		deadline = 60 * time.Second
+	}
+	conn.SetDeadline(time.Now().Add(deadline))
 
 	// Send event
 	env, err := protocol.NewEnvelope(protocol.MsgHookEvent, event)
@@ -142,6 +156,7 @@ func runHookLive(cmd *cobra.Command) error {
 		// Only write if there's meaningful content
 		if string(data) != "{}" {
 			os.Stdout.Write(data)
+			os.Stdout.Write([]byte("\n"))
 		}
 	}
 

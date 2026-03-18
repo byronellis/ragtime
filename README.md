@@ -47,14 +47,18 @@ rt tui
 
 #### Claude Code
 
-Add to your Claude Code settings (`.claude/settings.json`):
+Add to your Claude Code settings (`.claude/settings.local.json`):
 
 ```json
 {
   "hooks": {
     "PreToolUse": [{ "command": "rt hook --agent claude --event pre-tool-use" }],
     "PostToolUse": [{ "command": "rt hook --agent claude --event post-tool-use" }],
+    "PermissionRequest": [{ "command": "rt hook --agent claude --event permission-request" }],
     "Stop": [{ "command": "rt hook --agent claude --event stop" }],
+    "SubagentStop": [{ "command": "rt hook --agent claude --event subagent-stop" }],
+    "Notification": [{ "command": "rt hook --agent claude --event notification" }],
+    "SessionStart": [{ "command": "rt hook --agent claude --event session-start" }],
     "UserPromptSubmit": [{ "command": "rt hook --agent claude --event user-prompt-submit" }]
   }
 }
@@ -101,6 +105,42 @@ actions:
           else:
               response.deny("blocked by review rule")
 ```
+
+For permission-level control using Claude's built-in permission system:
+
+```yaml
+# ~/.ragtime/rules/review-permission.yaml
+name: review-permission
+match:
+  event: permission-request
+actions:
+  - type: starlark
+    script: |
+      tool = event.tool_name
+      cmd = event.tool_input.get("command", "")
+      path = event.tool_input.get("file_path", "")
+
+      detail = cmd if cmd else path
+      if detail:
+          text = "## Permission Request\n\n**Tool:** `" + tool + "`\n\n```\n" + detail + "\n```\n\nAllow this?"
+      else:
+          text = "## Permission Request\n\n**Tool:** `" + tool + "`\n\nAllow this?"
+
+      if tui.connected():
+          answer = response.prompt(
+              text=text,
+              type="approve_deny_cancel",
+              default="approve",
+              timeout=5,
+          )
+          if answer == "approve":
+              response.approve()
+          elif answer == "deny":
+              response.deny("denied via TUI review")
+      # If no TUI, fall through to agent's default behavior
+```
+
+This rule intercepts Claude Code's permission prompts and routes them to a TUI modal with a 5-second auto-approve countdown. If the TUI isn't open, the hook is a no-op and the agent's normal permission dialog appears.
 
 ### Searching Sessions
 
@@ -180,7 +220,32 @@ Requires Go 1.21+. Single binary, no external dependencies at runtime (embedding
 
 ## Status
 
-Actively developing. The daemon, hook engine, Starlark rule engine, RAG indexing, session management, TUI dashboard, and interactive modals are functional.
+Ragtime is in active early development — functional but not yet stable.
+
+### What works
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Daemon lifecycle | Working | `rt start/stop/restart`, PID tracking, Unix socket IPC |
+| Hook relay | Working | stdin/stdout JSON relay for Claude Code hooks; all event types supported |
+| Rule engine | Working | YAML rule matching by event type, tool name, and glob patterns |
+| Starlark scripting | Working | Full scripting in rule actions — conditionals, event inspection, response control |
+| RAG indexing | Working | Ollama-backed embeddings, per-collection chunking and search |
+| Session indexing | Working | Automatic session capture, chunked and indexed for cross-session search |
+| TUI dashboard | Working | Live event feed, session panel, interaction modals (approve/deny/cancel) |
+| Hook test mode | Working | `rt hook --test` for local rule development without a daemon |
+| Permission requests | Working | `PermissionRequest` event support with TUI-based approval flow |
+| Markdown rendering | Working | Glamour-based rendering in TUI modals |
+| Multi-agent support | Partial | Hook relay works with any agent; Starlark `response.agent` exposes platform name. Session capture tested with Claude Code only |
+
+### What's next
+
+- Curated session summaries (compress session chunks to save space)
+- Time-range and project-scoped search
+- Session summary on connect
+- Agent note-taking (`rt add` from Starlark)
+- More example rules and cookbook patterns
+- Stability, error handling, and documentation polish
 
 ## License
 
