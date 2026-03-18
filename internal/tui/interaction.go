@@ -202,7 +202,7 @@ func (m InteractionModal) Update(msg tea.Msg) (InteractionModal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "escape":
+		case "esc", "escape":
 			return m, m.dismiss("cancel", false)
 		case "tab", "right":
 			m.focused = (m.focused + 1) % len(m.buttons)

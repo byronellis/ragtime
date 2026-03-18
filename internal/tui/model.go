@@ -117,7 +117,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			// Always handle escape and quit at the model level
 			switch msg.String() {
-			case "escape":
+			case "esc", "escape":
 				m.search = nil
 				return m, nil
 			case "ctrl+c":
