@@ -233,15 +233,16 @@ Ragtime is in active early development — functional but not yet stable.
 | RAG indexing | Working | Ollama-backed embeddings, per-collection chunking and search |
 | Session indexing | Working | Automatic session capture, chunked and indexed for cross-session search |
 | TUI dashboard | Working | Live event feed, session panel, interaction modals (approve/deny/cancel), uptime ticker |
+| TUI search | Working | Press `/` to run semantic search against the sessions collection from within the TUI |
 | Hook test mode | Working | `rt hook --test` for local rule development without a daemon |
 | Permission requests | Working | `PermissionRequest` event support with TUI-based approval flow and auto-approve countdown |
 | Markdown rendering | Working | Glamour-based rendering in TUI modals |
 | Hot reload | Working | Rule changes take effect immediately without daemon restart |
+| Session summary on connect | Working | `session-summary` rule injects recent session context on `SessionStart` via RAG search |
 | Multi-agent support | Partial | Hook relay works with any agent; Starlark `response.agent` exposes platform name. Session capture tested with Claude Code only |
 
 ### What's next
 
-- Session summary on connect — auto-inject recent session context when a new conversation starts
 - Project-scoped search — filter `rt search sessions` by project/repo to reduce noise
 - Agent note-taking — `rt note` or `rt add` from Starlark to leave breadcrumbs for future sessions
 - Curated session summaries — compress session chunks to save index space
