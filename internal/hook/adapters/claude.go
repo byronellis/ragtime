@@ -155,6 +155,19 @@ func ClaudePermissionRequestResponse(resp *protocol.HookResponse) map[string]any
 	return output
 }
 
+// ClaudeContextOnlyResponse formats a HookResponse for events that only support additionalContext.
+func ClaudeContextOnlyResponse(resp *protocol.HookResponse, hookEventName string) map[string]any {
+	output := map[string]any{}
+	if resp.Context != "" {
+		output["hookSpecificOutput"] = map[string]any{
+			"hookEventName":     hookEventName,
+			"additionalContext": resp.Context,
+		}
+	}
+	mergeOverrides(output, resp.OutputOverrides)
+	return output
+}
+
 // FormatClaudeResponse routes to the appropriate response formatter based on event type.
 func FormatClaudeResponse(resp *protocol.HookResponse, eventType string) map[string]any {
 	switch eventType {
@@ -166,14 +179,16 @@ func FormatClaudeResponse(resp *protocol.HookResponse, eventType string) map[str
 		return ClaudePostToolUseResponse(resp)
 	case "stop":
 		return ClaudeStopResponse(resp)
+	case "session-start":
+		return ClaudeContextOnlyResponse(resp, "SessionStart")
+	case "user-prompt-submit":
+		return ClaudeContextOnlyResponse(resp, "UserPromptSubmit")
+	case "subagent-stop":
+		return ClaudeContextOnlyResponse(resp, "SubagentStop")
+	case "notification":
+		return ClaudeContextOnlyResponse(resp, "Notification")
 	default:
-		// Generic: just include context if present
 		output := map[string]any{}
-		if resp.Context != "" {
-			output["hookSpecificOutput"] = map[string]any{
-				"additionalContext": resp.Context,
-			}
-		}
 		mergeOverrides(output, resp.OutputOverrides)
 		return output
 	}

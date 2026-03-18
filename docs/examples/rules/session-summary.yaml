@@ -1,0 +1,32 @@
+# Inject a summary of recent sessions for the current project on session start.
+# Requires RAG indexing to be enabled (Ollama embeddings).
+name: session-summary
+match:
+  event: session-start
+actions:
+  - type: starlark
+    script: |
+      if not event.cwd:
+          pass
+      else:
+          parts = event.cwd.split("/")
+          project = parts[-1] if len(parts) > 0 else event.cwd
+
+          results = rag.search("sessions", project, 5)
+
+          good = []
+          for r in results:
+              if r["score"] > 0.6:
+                  good.append(r)
+
+          if len(good) > 0:
+              texts = []
+              for r in good[:3]:
+                  texts.append(r["content"])
+
+              summary = "\n\n---\n\n".join(texts)
+              response.inject_context(
+                  "## Recent Session Context\n\n" +
+                  "Relevant context from recent work on **" + project + "**:\n\n" +
+                  summary
+              )
