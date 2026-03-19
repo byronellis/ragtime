@@ -8,10 +8,12 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/byronellis/ragtime/internal/protocol"
@@ -261,11 +263,15 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // spaHandler serves embedded static files, falling back to index.html.
 func spaHandler() http.Handler {
-	fileServer := http.FileServer(http.FS(staticFS))
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		panic(err)
+	}
+	fileServer := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Try to open the file in the embedded FS
 		if r.URL.Path != "/" {
-			f, err := staticFS.Open("static" + r.URL.Path)
+			f, err := sub.Open(strings.TrimPrefix(r.URL.Path, "/"))
 			if err == nil {
 				f.Close()
 				fileServer.ServeHTTP(w, r)
@@ -273,7 +279,7 @@ func spaHandler() http.Handler {
 			}
 		}
 		// Fallback: serve index.html for SPA routing
-		http.ServeFileFS(w, r, staticFS, "static/index.html")
+		http.ServeFileFS(w, r, sub, "index.html")
 	})
 }
 
