@@ -19,6 +19,7 @@ import (
 	"github.com/byronellis/ragtime/internal/rag/providers"
 	"github.com/byronellis/ragtime/internal/session"
 	ragstarlark "github.com/byronellis/ragtime/internal/starlark"
+	"github.com/byronellis/ragtime/internal/web"
 )
 
 // Daemon is the central ragtime process.
@@ -141,6 +142,32 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.socket.Stop()
 
+	// Start web server
+	if d.cfg.Daemon.HTTPPort > 0 {
+		webSvc := web.Services{
+			Events:       d.subs,
+			Interactions: d.interactions,
+			Sessions:     d.sessions,
+			RAG:          webRAGAdapter(d.rag),
+			DaemonInfo: func() protocol.DaemonInfo {
+				return protocol.DaemonInfo{
+					PID:        os.Getpid(),
+					StartedAt:  d.startedAt,
+					SocketPath: d.cfg.Daemon.Socket,
+					RuleCount:  len(d.engine.Rules()),
+				}
+			},
+		}
+		webAddr := fmt.Sprintf("127.0.0.1:%d", d.cfg.Daemon.HTTPPort)
+		webSrv := web.NewServer(webAddr, webSvc, d.logger)
+		if err := webSrv.Start(); err != nil {
+			d.logger.Warn("web server failed to start", "error", err)
+		} else {
+			defer webSrv.Stop()
+			d.logger.Info("web server started", "addr", webAddr)
+		}
+	}
+
 	d.logger.Info("daemon started",
 		"socket", d.cfg.Daemon.Socket,
 		"pid", os.Getpid(),
@@ -211,6 +238,28 @@ func (d *Daemon) initRAG() *rag.Engine {
 
 	provider := providers.NewOllama(d.cfg.Embeddings.Endpoint, d.cfg.Embeddings.Model)
 	return rag.NewEngine(indexDirs, provider, d.logger)
+}
+
+// ragEngineAdapter adapts *rag.Engine to the web.RAGSearcher interface.
+type ragEngineAdapter struct{ e *rag.Engine }
+
+func webRAGAdapter(e *rag.Engine) web.RAGSearcher {
+	if e == nil {
+		return nil
+	}
+	return &ragEngineAdapter{e: e}
+}
+
+func (a *ragEngineAdapter) Search(collection, query string, topK int) ([]web.SearchResult, error) {
+	results, err := a.e.Search(collection, query, topK)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.SearchResult, len(results))
+	for i, r := range results {
+		out[i] = web.SearchResult{Content: r.Content, Source: r.Source, Score: r.Score}
+	}
+	return out, nil
 }
 
 func (d *Daemon) startWatcher() (*config.Watcher, error) {
