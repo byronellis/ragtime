@@ -284,65 +284,39 @@ func spaHandler() http.Handler {
 	})
 }
 
-// serveIcon generates a music note PNG icon at the requested size.
+// serveIcon generates a "rt" wordmark PNG icon at the requested size.
 func serveIcon(size int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		img := image.NewRGBA(image.Rect(0, 0, size, size))
 		bg := color.RGBA{R: 0x28, G: 0x28, B: 0x28, A: 0xff}
 		accent := color.RGBA{R: 0x83, G: 0xa5, B: 0x98, A: 0xff}
 		draw.Draw(img, img.Bounds(), &image.Uniform{bg}, image.Point{}, draw.Src)
-		drawMusicNote(img, size, accent)
+		drawRT(img, size, accent)
 		w.Header().Set("Content-Type", "image/png")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		png.Encode(w, img)
 	}
 }
 
-// drawMusicNote draws a ♪ (eighth note) centered in a size×size image.
-func drawMusicNote(img *image.RGBA, size int, c color.RGBA) {
-	s := float64(size)
-
-	// Note head: tilted filled ellipse
-	hcx := int(0.38 * s)
-	hcy := int(0.72 * s)
-	hrx := int(0.22 * s)
-	hry := int(0.14 * s)
-	tilt := -0.4 // radians — tilts right-side down
-	cosT, sinT := math.Cos(tilt), math.Sin(tilt)
-	for y := hcy - hry - 4; y <= hcy+hry+4; y++ {
-		for x := hcx - hrx - 4; x <= hcx+hrx+4; x++ {
-			dx := float64(x - hcx)
-			dy := float64(y - hcy)
-			rx := cosT*dx + sinT*dy
-			ry := -sinT*dx + cosT*dy
-			if rx*rx/float64(hrx*hrx)+ry*ry/float64(hry*hry) <= 1.0 {
-				img.Set(x, y, c)
-			}
-		}
+// drawRT renders bold "rt" letterforms using simple rectangle strokes.
+func drawRT(img *image.RGBA, size int, c color.RGBA) {
+	// fr converts a 0-100 percentage to a pixel coordinate.
+	fr := func(pct float64) int { return int(math.Round(pct / 100.0 * float64(size))) }
+	fill := func(x1, y1, x2, y2 float64) {
+		draw.Draw(img, image.Rect(fr(x1), fr(y1), fr(x2), fr(y2)), &image.Uniform{c}, image.Point{}, draw.Src)
 	}
 
-	// Stem: vertical rectangle on the right edge of the note head
-	stemX := hcx + hrx - int(0.04*s)
-	stemW := max(int(0.055*s), 2)
-	stemTop := int(0.20 * s)
-	draw.Draw(img, image.Rect(stemX, stemTop, stemX+stemW, hcy), &image.Uniform{c}, image.Point{}, draw.Src)
+	// ── 'r' ──────────────────────────────────────────────────────────────
+	// Left vertical stem (full glyph height)
+	fill(12, 20, 23, 80)
+	// Top horizontal bar
+	fill(23, 20, 45, 31)
+	// Right vertical — upper arch only
+	fill(34, 31, 45, 53)
 
-	// Flag: curved shape from stem top, sweeping right then back in
-	flagH := int(0.36 * s)
-	flagMaxW := int(0.26 * s)
-	for fy := 0; fy < flagH; fy++ {
-		t := float64(fy) / float64(flagH)
-		// Outer edge follows a sine arc; tapers back to the stem at the bottom
-		w := int(float64(flagMaxW) * math.Sin(t*math.Pi*0.85+0.15) * (1 - t*0.3))
-		for fx := 0; fx <= w; fx++ {
-			img.Set(stemX+stemW+fx, stemTop+fy, c)
-		}
-	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	// ── 't' ──────────────────────────────────────────────────────────────
+	// Vertical stem (full glyph height)
+	fill(57, 20, 68, 80)
+	// Crossbar
+	fill(47, 38, 79, 49)
 }
