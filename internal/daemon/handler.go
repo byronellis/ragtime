@@ -79,6 +79,10 @@ func (h *Handler) handleCommand(env *protocol.Envelope) (*protocol.Envelope, err
 	switch cmd.Command {
 	case "search":
 		return h.handleSearch(cmd.Args)
+	case "sessions":
+		return h.handleSessions()
+	case "session-history":
+		return h.handleSessionHistory(cmd.Args)
 	default:
 		resp := &protocol.CommandResponse{
 			Success: false,
@@ -86,6 +90,49 @@ func (h *Handler) handleCommand(env *protocol.Envelope) (*protocol.Envelope, err
 		}
 		return protocol.NewEnvelope(protocol.MsgCommand, resp)
 	}
+}
+
+func (h *Handler) handleSessions() (*protocol.Envelope, error) {
+	sessions := h.daemon.sessions.List()
+	var infos []map[string]any
+	for _, s := range sessions {
+		info := map[string]any{
+			"agent":       s.Agent,
+			"session_id":  s.SessionID,
+			"started_at":  s.StartedAt,
+			"event_count": s.EventCount(),
+		}
+		if recent := s.RecentEvents(1); len(recent) > 0 {
+			info["last_event"] = recent[0].Timestamp
+		}
+		infos = append(infos, info)
+	}
+	resp := &protocol.CommandResponse{Success: true, Data: infos}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleSessionHistory(args map[string]any) (*protocol.Envelope, error) {
+	agent, _ := args["agent"].(string)
+	sessionID, _ := args["session_id"].(string)
+	if agent == "" || sessionID == "" {
+		resp := &protocol.CommandResponse{Success: false, Error: "agent and session_id are required"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	sess := h.daemon.sessions.Get(agent, sessionID)
+	if sess == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "session not found"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	last := 20
+	if v, ok := args["last"].(float64); ok && v > 0 {
+		last = int(v)
+	}
+
+	events := sess.RecentEvents(last)
+	resp := &protocol.CommandResponse{Success: true, Data: events}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
 }
 
 func (h *Handler) handleSearch(args map[string]any) (*protocol.Envelope, error) {
