@@ -103,11 +103,11 @@ func (sm *SubscriptionManager) Register(conn net.Conn) *protocol.SubscribeRespon
 	return &snap
 }
 
-// ClientCount returns the number of connected TUI clients.
+// ClientCount returns the number of connected TUI and web clients.
 func (sm *SubscriptionManager) ClientCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return len(sm.clients)
+	return len(sm.clients) + len(sm.sseClients)
 }
 
 // Unregister removes a TUI client.

@@ -54,13 +54,13 @@
     .status-dot.connected    { color: var(--green); }
     .status-dot.disconnected { color: var(--red); }
     #header-info { color: var(--dim); flex: 1; }
-    #notify-btn {
+    .header-btn {
       background: none; border: 1px solid var(--bg3); color: var(--dim);
       padding: 1px 6px; cursor: pointer; border-radius: 2px; font-size: 10px;
       font-family: inherit;
     }
-    #notify-btn:hover { border-color: var(--blue); color: var(--blue); }
-    #notify-btn.hidden { display: none; }
+    .header-btn:hover { border-color: var(--blue); color: var(--blue); }
+    .header-btn.hidden { display: none; }
 
     /* Event feed */
     #feed {
@@ -213,7 +213,8 @@
   <span class="status-dot disconnected" id="status-dot">●</span>
   <span id="status-text" style="color:var(--dim)">connecting…</span>
   <span id="header-info"></span>
-  <button id="notify-btn" onclick="requestNotifications()">Enable Notifications</button>
+  <button id="notify-btn" class="header-btn" onclick="requestNotifications()">Enable Notifications</button>
+  <button id="install-btn" class="header-btn hidden" onclick="installPWA()">Install App</button>
 </header>
 
 <main id="feed"></main>
@@ -571,26 +572,59 @@ async function runSearch() {
 // ─── Notifications ────────────────────────────────────────────────────────────
 function requestNotifications() {
   Notification.requestPermission().then(p => {
-    if (p === 'granted') document.getElementById('notify-btn').classList.add('hidden');
+    updateNotifyBtn();
   });
 }
 
 function notifyInteraction(interaction) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const n = new Notification('ragtime: Action Required', {
-    body: (interaction.text || '').replace(/[#*`]/g, '').slice(0, 120),
-    tag: 'ragtime-' + interaction.id,
-    requireInteraction: true,
-  });
-  n.onclick = () => { window.focus(); n.close(); };
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted') {
+    const n = new Notification('ragtime: Action Required', {
+      body: (interaction.text || '').replace(/[#*`]/g, '').slice(0, 120),
+      tag: 'ragtime-' + interaction.id,
+      requireInteraction: true,
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } else if (Notification.permission === 'default') {
+    // First interaction — prompt now while there's a reason to
+    Notification.requestPermission().then(p => {
+      updateNotifyBtn();
+      if (p === 'granted') notifyInteraction(interaction);
+    });
+  }
 }
 
 // Update notify button visibility
 function updateNotifyBtn() {
   const btn = document.getElementById('notify-btn');
-  if (!('Notification' in window) || Notification.permission === 'granted') {
+  if (!('Notification' in window) || Notification.permission !== 'default') {
     btn.classList.add('hidden');
+  } else {
+    btn.classList.remove('hidden');
   }
+}
+
+// ─── PWA Install ──────────────────────────────────────────────────────────────
+let installPrompt = null;
+
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installPrompt = e;
+  document.getElementById('install-btn').classList.remove('hidden');
+});
+
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  document.getElementById('install-btn').classList.add('hidden');
+});
+
+function installPWA() {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  installPrompt.userChoice.then(() => {
+    installPrompt = null;
+    document.getElementById('install-btn').classList.add('hidden');
+  });
 }
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────
