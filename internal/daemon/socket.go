@@ -2,11 +2,13 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/byronellis/ragtime/internal/protocol"
 )
@@ -159,8 +161,9 @@ func (s *SocketServer) handleShellAttach(conn net.Conn, env *protocol.Envelope) 
 		}
 	}
 
-	// Subscribe to shell output
-	subCh, unsub := shell.Subscribe("attach-" + conn.RemoteAddr().String())
+	// Subscribe to shell output with a unique ID (RemoteAddr is empty on unix sockets).
+	subID := fmt.Sprintf("attach-%d", time.Now().UnixNano())
+	subCh, unsub := shell.Subscribe(subID)
 	defer unsub()
 
 	// Writer goroutine: shell output -> conn
