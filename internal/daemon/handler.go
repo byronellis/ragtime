@@ -101,6 +101,8 @@ func (h *Handler) handleCommand(env *protocol.Envelope) (*protocol.Envelope, err
 		return h.handleShellSend(cmd.Args)
 	case "shell-capture":
 		return h.handleShellCapture(cmd.Args)
+	case "active-sessions":
+		return h.handleActiveSessions()
 	default:
 		resp := &protocol.CommandResponse{
 			Success: false,
@@ -432,5 +434,66 @@ func (h *Handler) handleShellCapture(args map[string]any) (*protocol.Envelope, e
 
 	scrollback := shell.Scrollback().Bytes()
 	resp := &protocol.CommandResponse{Success: true, Data: string(scrollback)}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+// handleActiveSessions returns a combined view of sessions + latest statusline + shell info.
+func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
+	sessions := h.daemon.sessions.List()
+
+	// Build shell map for O(1) lookups
+	shellByID := make(map[string]*protocol.ShellInfo)
+	if h.daemon.shellMgr != nil {
+		for _, s := range h.daemon.shellMgr.List(false) {
+			info := s.Info()
+			shellByID[info.ID] = info
+		}
+	}
+
+	var results []map[string]any
+	for _, sess := range sessions {
+		entry := map[string]any{
+			"agent":       sess.Agent,
+			"session_id":  sess.SessionID,
+			"started_at":  sess.StartedAt,
+			"event_count": sess.EventCount(),
+		}
+		if recent := sess.RecentEvents(1); len(recent) > 0 {
+			entry["last_event"] = recent[0].Timestamp
+		}
+
+		// Latest statusline snapshot for this session
+		if h.daemon.db != nil {
+			records, err := h.daemon.db.QueryStatusline(sess.SessionID, time.Time{}, 1)
+			if err == nil && len(records) > 0 {
+				r := records[0]
+				entry["model"] = r.Model
+				entry["num_turns"] = r.NumTurns
+				entry["cost_usd"] = r.CostUSD
+				entry["input_tokens"] = r.InputTokens
+				entry["output_tokens"] = r.OutputTokens
+				entry["cache_create_tokens"] = r.CacheCreateTok
+				entry["cache_read_tokens"] = r.CacheReadTok
+				entry["cwd"] = r.CWD
+				entry["statusline_ts"] = r.Ts
+
+				// Extract shell_id from raw_json
+				var raw map[string]any
+				if json.Unmarshal([]byte(r.RawJSON), &raw) == nil {
+					if shellID, ok := raw["shell_id"].(string); ok && shellID != "" {
+						entry["shell_id"] = shellID
+						if info, ok := shellByID[shellID]; ok {
+							entry["shell_state"] = info.State
+							entry["shell_pid"] = info.PID
+						}
+					}
+				}
+			}
+		}
+
+		results = append(results, entry)
+	}
+
+	resp := &protocol.CommandResponse{Success: true, Data: results}
 	return protocol.NewEnvelope(protocol.MsgCommand, resp)
 }

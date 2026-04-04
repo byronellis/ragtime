@@ -105,6 +105,18 @@ func (c *daemonClient) captureShell(id string) (string, error) {
 	return s, nil
 }
 
+// listActiveSessions returns aggregated session+statusline+shell data.
+func (c *daemonClient) listActiveSessions() ([]map[string]any, error) {
+	resp, err := c.command("active-sessions", nil)
+	if err != nil {
+		return nil, err
+	}
+	data, _ := json.Marshal(resp.Data)
+	var sessions []map[string]any
+	json.Unmarshal(data, &sessions)
+	return sessions, nil
+}
+
 // sendToShell writes raw bytes to a shell's PTY stdin.
 func (c *daemonClient) sendToShell(id string, data []byte) error {
 	_, err := c.command("shell-send", map[string]any{

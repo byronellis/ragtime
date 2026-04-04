@@ -414,6 +414,7 @@ func (impl *ragtimeImpl) root() *dirEntry {
 		name: "",
 		kids: func(rfs *RagtimeFS) []entry {
 			return []entry{
+				impl.activeDir(),
 				impl.sessionsDir(),
 				impl.collectionsDir(),
 				impl.agentsDir(),
@@ -604,6 +605,168 @@ func (impl *ragtimeImpl) outputLog(shellID string, mtime time.Time) *fileEntry {
 			return []byte(out)
 		},
 	}
+}
+
+// ── active/ ──────────────────────────────────────────────────────────────────
+
+func (impl *ragtimeImpl) activeDir() *dirEntry {
+	return &dirEntry{
+		name: "active",
+		kids: func(rfs *RagtimeFS) []entry {
+			sessions, _ := rfs.daemon.listActiveSessions()
+			entries := make([]entry, len(sessions))
+			for i, s := range sessions {
+				s := s
+				entries[i] = impl.activeSessionDir(s)
+			}
+			return entries
+		},
+	}
+}
+
+func (impl *ragtimeImpl) activeSessionDir(s map[string]any) *dirEntry {
+	agent, _ := s["agent"].(string)
+	sessionID, _ := s["session_id"].(string)
+	shellID, _ := s["shell_id"].(string)
+
+	kids := func(rfs *RagtimeFS) []entry {
+		entries := []entry{
+			impl.activeSummaryTxt(s),
+			impl.activeStatusJSON(s),
+		}
+		if shellID != "" {
+			// Symlinks into agents/ for live terminal access
+			rel := "../../agents/" + shellID
+			entries = append(entries,
+				&linkEntry{name: "output.log", target: rel + "/output.log"},
+				&linkEntry{name: "input", target: rel + "/input"},
+			)
+		}
+		return entries
+	}
+
+	return &dirEntry{
+		name: fmt.Sprintf("%s-%s", agent, sessionID),
+		kids: kids,
+	}
+}
+
+func (impl *ragtimeImpl) activeSummaryTxt(s map[string]any) *fileEntry {
+	return &fileEntry{
+		name: "summary.txt",
+		data: func(_ *RagtimeFS) []byte { return formatActiveSummary(s) },
+	}
+}
+
+func (impl *ragtimeImpl) activeStatusJSON(s map[string]any) *fileEntry {
+	return &fileEntry{
+		name: "status.json",
+		data: func(_ *RagtimeFS) []byte {
+			b, _ := json.MarshalIndent(s, "", "  ")
+			return append(b, '\n')
+		},
+	}
+}
+
+func formatActiveSummary(s map[string]any) []byte {
+	var sb strings.Builder
+	agent, _ := s["agent"].(string)
+	sessionID, _ := s["session_id"].(string)
+	model, _ := s["model"].(string)
+	cwd, _ := s["cwd"].(string)
+	shellID, _ := s["shell_id"].(string)
+	shellState, _ := s["shell_state"].(string)
+
+	startedStr, _ := s["started_at"].(string)
+	started, _ := time.Parse(time.RFC3339Nano, startedStr)
+	lastEventStr, _ := s["last_event"].(string)
+	lastEvent, _ := time.Parse(time.RFC3339Nano, lastEventStr)
+
+	eventCount, _ := s["event_count"].(float64)
+	numTurns, _ := s["num_turns"].(float64)
+	costUSD, _ := s["cost_usd"].(float64)
+	inputTok, _ := s["input_tokens"].(float64)
+	outputTok, _ := s["output_tokens"].(float64)
+	cacheCreate, _ := s["cache_create_tokens"].(float64)
+	cacheRead, _ := s["cache_read_tokens"].(float64)
+
+	now := time.Now()
+
+	fmt.Fprintf(&sb, "Session:  %s / %s\n", agent, sessionID)
+	if model != "" {
+		fmt.Fprintf(&sb, "Model:    %s\n", model)
+	}
+	if !started.IsZero() {
+		fmt.Fprintf(&sb, "Started:  %s  (%s ago)\n",
+			started.Format("2006-01-02 15:04:05"),
+			formatDuration(now.Sub(started)))
+	}
+	if !lastEvent.IsZero() {
+		fmt.Fprintf(&sb, "Active:   %d events, last %s ago\n",
+			int(eventCount), formatDuration(now.Sub(lastEvent)))
+	}
+	if cwd != "" {
+		fmt.Fprintf(&sb, "CWD:      %s\n", cwd)
+	}
+
+	sb.WriteString("\n── Cost & Tokens ")
+	sb.WriteString(strings.Repeat("─", 44) + "\n")
+	if costUSD > 0 {
+		fmt.Fprintf(&sb, "Cost:     $%.4f\n", costUSD)
+	}
+	if numTurns > 0 {
+		fmt.Fprintf(&sb, "Turns:    %d\n", int(numTurns))
+	}
+	if inputTok > 0 || outputTok > 0 {
+		fmt.Fprintf(&sb, "Input:    %s tokens\n", formatTokens(int(inputTok)))
+		fmt.Fprintf(&sb, "Output:   %s tokens\n", formatTokens(int(outputTok)))
+	}
+	if cacheCreate > 0 || cacheRead > 0 {
+		fmt.Fprintf(&sb, "Cache:    %s created / %s read\n",
+			formatTokens(int(cacheCreate)), formatTokens(int(cacheRead)))
+		// Context window estimate: input + cache_read is what the model actually sees
+		contextUsed := int(inputTok) + int(cacheRead)
+		fmt.Fprintf(&sb, "Context:  ~%s tokens in window\n", formatTokens(contextUsed))
+	}
+
+	if shellID != "" {
+		sb.WriteString("\n── Shell ")
+		sb.WriteString(strings.Repeat("─", 51) + "\n")
+		fmt.Fprintf(&sb, "Shell ID: %s", shellID)
+		if shellState != "" {
+			fmt.Fprintf(&sb, "  (%s)", shellState)
+		}
+		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "          output.log / input available in this directory\n")
+	}
+
+	return []byte(sb.String())
+}
+
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%dm", h, m)
+}
+
+func formatTokens(n int) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 func (impl *ragtimeImpl) notesDir(shellID string) *writableDirEntry {
