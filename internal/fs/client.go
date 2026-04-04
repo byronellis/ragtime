@@ -11,7 +11,7 @@ import (
 
 // daemonClient sends commands to the ragtime daemon and returns responses.
 type daemonClient struct {
-	socketPath string
+	socketPath string // exported so watch.go can use it
 }
 
 func newDaemonClient(socketPath string) *daemonClient {
@@ -103,6 +103,15 @@ func (c *daemonClient) captureShell(id string) (string, error) {
 	}
 	s, _ := resp.Data.(string)
 	return s, nil
+}
+
+// sendToShell writes raw bytes to a shell's PTY stdin.
+func (c *daemonClient) sendToShell(id string, data []byte) error {
+	_, err := c.command("shell-send", map[string]any{
+		"id":   id,
+		"text": string(data),
+	})
+	return err
 }
 
 // sessionSummary is what the daemon returns for the sessions command.

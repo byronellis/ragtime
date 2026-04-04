@@ -55,7 +55,7 @@ func (rfs *RagtimeFS) Mount(ctx context.Context, mountPath string) error {
 		return fmt.Errorf("create mount point: %w", err)
 	}
 
-	impl := &ragtimeImpl{rfs: rfs}
+	impl := &ragtimeImpl{rfs: rfs, notes: newNotesStore()}
 	host := fuse.NewFileSystemHost(impl)
 	host.SetCapReaddirPlus(true)
 	rfs.host = host

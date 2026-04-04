@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/byronellis/ragtime/internal/protocol"
@@ -21,10 +23,25 @@ import (
 
 type ragtimeImpl struct {
 	fuse.FileSystemBase
-	rfs *RagtimeFS
+	rfs    *RagtimeFS
+	notes  *notesStore
+	fhSeq  atomic.Uint64
+	// fh -> *shellWatcher (for output.log handles)
+	watchers sync.Map
+	// fh -> noteHandle (for notes/ file handles)
+	noteHandles sync.Map
+}
+
+type noteHandle struct {
+	shellID string
+	name    string
 }
 
 func (impl *ragtimeImpl) Init() {}
+
+// ---------------------------------------------------------------------------
+// Stat
+// ---------------------------------------------------------------------------
 
 func (impl *ragtimeImpl) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
 	e := impl.resolve(path)
@@ -34,6 +51,10 @@ func (impl *ragtimeImpl) Getattr(path string, stat *fuse.Stat_t, fh uint64) int 
 	e.fillStat(impl.rfs, stat)
 	return 0
 }
+
+// ---------------------------------------------------------------------------
+// Directory operations
+// ---------------------------------------------------------------------------
 
 func (impl *ragtimeImpl) Readdir(path string,
 	fill func(name string, stat *fuse.Stat_t, ofst int64) bool,
@@ -57,18 +78,46 @@ func (impl *ragtimeImpl) Readdir(path string,
 	return 0
 }
 
+// ---------------------------------------------------------------------------
+// File open / read / release
+// ---------------------------------------------------------------------------
+
 func (impl *ragtimeImpl) Open(path string, flags int) (int, uint64) {
 	e := impl.resolve(path)
 	if e == nil {
 		return -fuse.ENOENT, ^uint64(0)
 	}
-	if _, ok := e.(*fileEntry); !ok {
+
+	switch node := e.(type) {
+	case *fileEntry:
+		if node.streaming {
+			// Live output.log — open a shell watcher
+			fh := impl.fhSeq.Add(1)
+			w, err := newShellWatcher(impl.rfs.daemon.socketPath, node.shellID, 220, 50)
+			if err != nil {
+				// Fall back to static read if shell is gone
+				return 0, 0
+			}
+			impl.watchers.Store(fh, w)
+			return 0, fh
+		}
+		return 0, 0
+
+	case *writeOnlyEntry:
+		_ = node
+		return 0, 0
+
+	default:
 		return -fuse.EISDIR, ^uint64(0)
 	}
-	return 0, 0
 }
 
 func (impl *ragtimeImpl) Read(path string, buf []byte, ofst int64, fh uint64) int {
+	// Check if this is a streaming handle
+	if w, ok := impl.watchers.Load(fh); ok {
+		return w.(*shellWatcher).Read(buf, ofst)
+	}
+
 	e := impl.resolve(path)
 	if e == nil {
 		return -fuse.ENOENT
@@ -84,6 +133,108 @@ func (impl *ragtimeImpl) Read(path string, buf []byte, ofst int64, fh uint64) in
 	return copy(buf, data[ofst:])
 }
 
+func (impl *ragtimeImpl) Release(path string, fh uint64) int {
+	if w, ok := impl.watchers.LoadAndDelete(fh); ok {
+		w.(*shellWatcher).Close()
+	}
+	if _, ok := impl.noteHandles.LoadAndDelete(fh); ok {
+		// Note handle closed without explicit flush — finalise
+		impl.finaliseNote(path, fh)
+	}
+	return 0
+}
+
+// ---------------------------------------------------------------------------
+// Write support (input file + notes/)
+// ---------------------------------------------------------------------------
+
+func (impl *ragtimeImpl) Write(path string, buf []byte, ofst int64, fh uint64) int {
+	// notes/ write
+	if nh, ok := impl.noteHandles.Load(fh); ok {
+		h := nh.(noteHandle)
+		impl.notes.write(h.shellID, h.name, buf, ofst)
+		return len(buf)
+	}
+
+	// agents/<id>/input write
+	e := impl.resolve(path)
+	if e == nil {
+		return -fuse.ENOENT
+	}
+	wo, ok := e.(*writeOnlyEntry)
+	if !ok {
+		return -fuse.EBADF
+	}
+	if err := impl.rfs.daemon.sendToShell(wo.shellID, buf); err != nil {
+		return -fuse.EIO
+	}
+	return len(buf)
+}
+
+// ---------------------------------------------------------------------------
+// notes/ directory — Create / Unlink / Read note files
+// ---------------------------------------------------------------------------
+
+func (impl *ragtimeImpl) Create(path string, flags int, mode uint32) (int, uint64) {
+	shellID, name := parseNotePath(path)
+	if shellID == "" {
+		return -fuse.EPERM, ^uint64(0)
+	}
+	impl.notes.write(shellID, name, nil, 0) // create empty
+	fh := impl.fhSeq.Add(1)
+	impl.noteHandles.Store(fh, noteHandle{shellID: shellID, name: name})
+	return 0, fh
+}
+
+func (impl *ragtimeImpl) Unlink(path string) int {
+	shellID, name := parseNotePath(path)
+	if shellID == "" {
+		return -fuse.EPERM
+	}
+	impl.notes.delete(shellID, name)
+	return 0
+}
+
+func (impl *ragtimeImpl) Truncate(path string, size int64, fh uint64) int {
+	if nh, ok := impl.noteHandles.Load(fh); ok {
+		h := nh.(noteHandle)
+		impl.notes.truncate(h.shellID, h.name, size)
+		return 0
+	}
+	return -fuse.EPERM
+}
+
+func (impl *ragtimeImpl) Flush(path string, fh uint64) int {
+	if nh, ok := impl.noteHandles.Load(fh); ok {
+		h := nh.(noteHandle)
+		impl.notes.finalise(h.shellID, h.name, impl.rfs.rag)
+		return 0
+	}
+	return 0
+}
+
+// finaliseNote indexes a note from path context (used in Release fallback).
+func (impl *ragtimeImpl) finaliseNote(path string, fh uint64) {
+	shellID, name := parseNotePath(path)
+	if shellID != "" {
+		impl.notes.finalise(shellID, name, impl.rfs.rag)
+	}
+}
+
+// parseNotePath parses "agents/<shellID>/notes/<name>" and returns (shellID, name).
+func parseNotePath(path string) (shellID, name string) {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	// agents/<id>/notes/<name>  or  shells/<id>/notes/<name>
+	if len(parts) == 4 && (parts[0] == "agents" || parts[0] == "shells") && parts[2] == "notes" {
+		return parts[1], parts[3]
+	}
+	return "", ""
+}
+
+// ---------------------------------------------------------------------------
+// Symlink
+// ---------------------------------------------------------------------------
+
 func (impl *ragtimeImpl) Readlink(path string) (int, string) {
 	e := impl.resolve(path)
 	if e == nil {
@@ -96,6 +247,10 @@ func (impl *ragtimeImpl) Readlink(path string) (int, string) {
 	return 0, sl.target
 }
 
+// ---------------------------------------------------------------------------
+// Xattr stubs (suppress ENOSYS)
+// ---------------------------------------------------------------------------
+
 func (impl *ragtimeImpl) Getxattr(path string, name string) (int, []byte) {
 	return -fuse.ENOTSUP, nil
 }
@@ -104,7 +259,10 @@ func (impl *ragtimeImpl) Setxattr(path string, name string, value []byte, flags 
 	return -fuse.ENOTSUP
 }
 
-// resolve walks the virtual tree to the entry at path.
+// ---------------------------------------------------------------------------
+// Path resolution — walks the virtual tree
+// ---------------------------------------------------------------------------
+
 func (impl *ragtimeImpl) resolve(path string) entry {
 	root := impl.root()
 	if path == "/" {
@@ -141,6 +299,7 @@ type entry interface {
 	fillStat(rfs *RagtimeFS, out *fuse.Stat_t)
 }
 
+// dirEntry: a directory with dynamically-produced children.
 type dirEntry struct {
 	name  string
 	mtime time.Time
@@ -157,23 +316,70 @@ func (d *dirEntry) fillStat(_ *RagtimeFS, out *fuse.Stat_t) {
 	}
 }
 
+// writableDirEntry: a directory that allows creates (notes/).
+type writableDirEntry struct {
+	dirEntry
+}
+
+func (d *writableDirEntry) fillStat(rfs *RagtimeFS, out *fuse.Stat_t) {
+	d.dirEntry.fillStat(rfs, out)
+	out.Mode = fuse.S_IFDIR | 0o755
+}
+
+// fileEntry: a regular read-only file with lazily-computed content.
 type fileEntry struct {
-	name  string
-	mtime time.Time
-	data  func(rfs *RagtimeFS) []byte
+	name      string
+	mtime     time.Time
+	data      func(rfs *RagtimeFS) []byte
+	streaming bool   // true for output.log — uses shellWatcher
+	shellID   string // set when streaming=true
 }
 
 func (f *fileEntry) ename() string { return f.name }
 func (f *fileEntry) fillStat(rfs *RagtimeFS, out *fuse.Stat_t) {
 	out.Mode = fuse.S_IFREG | 0o444
 	out.Nlink = 1
-	out.Size = int64(len(f.data(rfs)))
+	if f.streaming {
+		out.Size = 1<<62 - 1 // report large size so tail -f doesn't stop early
+	} else {
+		out.Size = int64(len(f.data(rfs)))
+	}
 	if !f.mtime.IsZero() {
 		t := fuse.NewTimespec(f.mtime)
 		out.Mtim, out.Ctim, out.Atim = t, t, t
 	}
 }
 
+// writeOnlyEntry: the agents/<id>/input write-only file.
+type writeOnlyEntry struct {
+	name    string
+	shellID string
+}
+
+func (w *writeOnlyEntry) ename() string { return w.name }
+func (w *writeOnlyEntry) fillStat(_ *RagtimeFS, out *fuse.Stat_t) {
+	out.Mode = fuse.S_IFREG | 0o222
+	out.Nlink = 1
+}
+
+// noteFileEntry: a file inside a notes/ directory.
+type noteFileEntry struct {
+	shellID string
+	name    string
+	impl    *ragtimeImpl
+}
+
+func (n *noteFileEntry) ename() string { return n.name }
+func (n *noteFileEntry) fillStat(_ *RagtimeFS, out *fuse.Stat_t) {
+	content := n.impl.notes.get(n.shellID, n.name)
+	out.Mode = fuse.S_IFREG | 0o644
+	out.Nlink = 1
+	out.Size = int64(len(content))
+	t := fuse.NewTimespec(time.Now())
+	out.Mtim, out.Ctim, out.Atim = t, t, t
+}
+
+// linkEntry: a symbolic link.
 type linkEntry struct {
 	name   string
 	target string
@@ -186,7 +392,7 @@ func (l *linkEntry) fillStat(_ *RagtimeFS, out *fuse.Stat_t) {
 	out.Size = int64(len(l.target))
 }
 
-// jsonFile returns a fileEntry that marshals obj as indented JSON.
+// jsonFile: a fileEntry that marshals obj as indented JSON.
 func jsonFile(name string, mtime time.Time, obj func(rfs *RagtimeFS) any) *fileEntry {
 	return &fileEntry{
 		name:  name,
@@ -302,7 +508,7 @@ func formatHistory(s sessionSummary, events []map[string]any) []byte {
 	return []byte(sb.String())
 }
 
-// ── collections/ ────────────────────────────────────────────────────────────
+// ── collections/ ─────────────────────────────────────────────────────────────
 
 func (impl *ragtimeImpl) collectionsDir() *dirEntry {
 	return &dirEntry{
@@ -354,7 +560,7 @@ func (impl *ragtimeImpl) chunksFile(name string) *fileEntry {
 	}
 }
 
-// ── agents/ ─────────────────────────────────────────────────────────────────
+// ── agents/ ──────────────────────────────────────────────────────────────────
 
 func (impl *ragtimeImpl) agentsDir() *dirEntry {
 	return &dirEntry{
@@ -379,6 +585,8 @@ func (impl *ragtimeImpl) agentDir(s protocol.ShellInfo) *dirEntry {
 			return []entry{
 				jsonFile("info.json", s.StartedAt, func(_ *RagtimeFS) any { return s }),
 				impl.outputLog(s.ID, s.StartedAt),
+				&writeOnlyEntry{name: "input", shellID: s.ID},
+				impl.notesDir(s.ID),
 			}
 		},
 	}
@@ -386,11 +594,29 @@ func (impl *ragtimeImpl) agentDir(s protocol.ShellInfo) *dirEntry {
 
 func (impl *ragtimeImpl) outputLog(shellID string, mtime time.Time) *fileEntry {
 	return &fileEntry{
-		name:  "output.log",
-		mtime: mtime,
+		name:      "output.log",
+		mtime:     mtime,
+		streaming: true,
+		shellID:   shellID,
+		// data is used only as fallback when streaming attach fails
 		data: func(rfs *RagtimeFS) []byte {
 			out, _ := rfs.daemon.captureShell(shellID)
 			return []byte(out)
 		},
 	}
+}
+
+func (impl *ragtimeImpl) notesDir(shellID string) *writableDirEntry {
+	return &writableDirEntry{dirEntry: dirEntry{
+		name: "notes",
+		kids: func(rfs *RagtimeFS) []entry {
+			names := impl.notes.list(shellID)
+			entries := make([]entry, len(names))
+			for i, n := range names {
+				n := n
+				entries[i] = &noteFileEntry{shellID: shellID, name: n, impl: impl}
+			}
+			return entries
+		},
+	}}
 }
