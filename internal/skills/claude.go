@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// ClaudeStatuslineConfig is the top-level statusline block in Claude Code settings.
+type ClaudeStatuslineConfig struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
 // ClaudeHooksConfig represents the hooks section of Claude Code settings.
 type ClaudeHooksConfig struct {
 	Hooks map[string][]ClaudeHookEntry `json:"hooks"`
@@ -55,15 +61,6 @@ func GenerateClaudeHooks() *ClaudeHooksConfig {
 		}
 	}
 
-	// StatusUpdate hook — receives statusline JSON on stdin
-	hooks["StatusUpdate"] = []ClaudeHookEntry{
-		{
-			Hooks: []ClaudeHookDef{
-				{Type: "command", Command: "rt statusline --agent claude"},
-			},
-		},
-	}
-
 	return &ClaudeHooksConfig{Hooks: hooks}
 }
 
@@ -106,11 +103,24 @@ func SetupClaude(projectDir string) error {
 		json.Unmarshal(data, &existing)
 	}
 
-	// Merge hooks into existing settings
+	// Merge hooks into existing settings, removing any legacy StatusUpdate entry
+	// (statusline is now a separate top-level key, not a hook)
 	var hooksMap map[string]any
 	json.Unmarshal(hooksJSON, &hooksMap)
+	if newHooks, ok := hooksMap["hooks"].(map[string]any); ok {
+		delete(newHooks, "StatusUpdate")
+	}
+	if existingHooks, ok := existing["hooks"].(map[string]any); ok {
+		delete(existingHooks, "StatusUpdate")
+	}
 	for k, v := range hooksMap {
 		existing[k] = v
+	}
+
+	// Statusline is a top-level key, not part of hooks
+	existing["statusline"] = ClaudeStatuslineConfig{
+		Type:    "command",
+		Command: "rt statusline --agent claude",
 	}
 
 	mergedJSON, err := json.MarshalIndent(existing, "", "  ")
