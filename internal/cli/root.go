@@ -38,6 +38,8 @@ func NewRootCmd() *cobra.Command {
 		newTUICmd(),
 		newStatuslineCmd(),
 		newShCmd(),
+		newMountCmd(),
+		newUmountCmd(),
 	)
 
 	return cmd
