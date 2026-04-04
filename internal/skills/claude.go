@@ -39,6 +39,7 @@ func GenerateClaudeHooks() *ClaudeHooksConfig {
 	}{
 		{"PreToolUse", "pre-tool-use"},
 		{"PostToolUse", "post-tool-use"},
+		{"PermissionRequest", "permission-request"},
 		{"Notification", "notification"},
 		{"Stop", "stop"},
 		{"UserPromptSubmit", "user-prompt-submit"},
