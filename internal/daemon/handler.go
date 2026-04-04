@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/byronellis/ragtime/internal/db"
 	"github.com/byronellis/ragtime/internal/protocol"
 )
 
@@ -22,6 +24,8 @@ func (h *Handler) Handle(env *protocol.Envelope) (*protocol.Envelope, error) {
 	switch env.Type {
 	case protocol.MsgHookEvent:
 		return h.handleHookEvent(env)
+	case protocol.MsgStatuslineEvent:
+		return h.handleStatuslineEvent(env)
 	case protocol.MsgCommand:
 		return h.handleCommand(env)
 	default:
@@ -83,6 +87,20 @@ func (h *Handler) handleCommand(env *protocol.Envelope) (*protocol.Envelope, err
 		return h.handleSessions()
 	case "session-history":
 		return h.handleSessionHistory(cmd.Args)
+	case "statusline-query":
+		return h.handleStatuslineQuery(cmd.Args)
+	case "cost-summary":
+		return h.handleCostSummary(cmd.Args)
+	case "shell-new":
+		return h.handleShellNew(cmd.Args)
+	case "shell-list":
+		return h.handleShellList(cmd.Args)
+	case "shell-kill":
+		return h.handleShellKill(cmd.Args)
+	case "shell-send":
+		return h.handleShellSend(cmd.Args)
+	case "shell-capture":
+		return h.handleShellCapture(cmd.Args)
 	default:
 		resp := &protocol.CommandResponse{
 			Success: false,
@@ -163,5 +181,250 @@ func (h *Handler) handleSearch(args map[string]any) (*protocol.Envelope, error) 
 	}
 
 	resp := &protocol.CommandResponse{Success: true, Data: results}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleStatuslineEvent(env *protocol.Envelope) (*protocol.Envelope, error) {
+	var e protocol.StatuslineEvent
+	if err := env.DecodePayload(&e); err != nil {
+		return nil, fmt.Errorf("decode statusline event: %w", err)
+	}
+
+	// Store in database
+	if h.daemon.db != nil {
+		rawJSON, _ := json.Marshal(e)
+		rec := &db.StatuslineRecord{
+			Ts:             time.Now(),
+			SessionID:      e.SessionID,
+			Agent:          e.Agent,
+			Model:          e.Model,
+			NumTurns:       e.NumTurns,
+			CostUSD:        e.CostUSD,
+			InputTokens:    e.InputTokens,
+			OutputTokens:   e.OutputTokens,
+			CacheCreateTok: e.CacheCreateTokens,
+			CacheReadTok:   e.CacheReadTokens,
+			CWD:            e.CWD,
+			RawJSON:        string(rawJSON),
+		}
+		if err := h.daemon.db.InsertStatusline(rec); err != nil {
+			h.daemon.logger.Error("insert statusline", "error", err)
+		}
+	}
+
+	// Create a HookEvent for the bus so Starlark rules and TUI see it
+	raw := map[string]any{
+		"model":      e.Model,
+		"num_turns":  e.NumTurns,
+		"cost_usd":   e.CostUSD,
+		"input_tokens":  e.InputTokens,
+		"output_tokens": e.OutputTokens,
+	}
+	hookEvt := &protocol.HookEvent{
+		EventType: "statusline",
+		SessionID: e.SessionID,
+		Agent:     e.Agent,
+		CWD:       e.CWD,
+		Raw:       raw,
+	}
+	h.daemon.bus.Publish(hookEvt)
+
+	// Also broadcast statusline-specific stream event
+	if h.daemon.subs != nil {
+		h.daemon.subs.Broadcast(&protocol.StreamEvent{
+			Kind:       "statusline",
+			Timestamp:  time.Now(),
+			Statusline: &e,
+		})
+	}
+
+	resp := &protocol.CommandResponse{Success: true}
+	return protocol.NewEnvelope(protocol.MsgStatuslineEvent, resp)
+}
+
+func (h *Handler) handleStatuslineQuery(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.db == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "database not available"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	sessionID, _ := args["session"].(string)
+	limit := 100
+	if v, ok := args["limit"].(float64); ok && v > 0 {
+		limit = int(v)
+	}
+
+	var since time.Time
+	if v, ok := args["since"].(string); ok && v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			since = t
+		}
+	}
+
+	records, err := h.daemon.db.QueryStatusline(sessionID, since, limit)
+	if err != nil {
+		resp := &protocol.CommandResponse{Success: false, Error: err.Error()}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	resp := &protocol.CommandResponse{Success: true, Data: records}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleCostSummary(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.db == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "database not available"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	since := time.Now().Add(-24 * time.Hour) // default: last 24h
+	if v, ok := args["since"].(string); ok && v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			since = t
+		}
+	}
+
+	summary, err := h.daemon.db.QueryStatuslineSummary(since)
+	if err != nil {
+		resp := &protocol.CommandResponse{Success: false, Error: err.Error()}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	resp := &protocol.CommandResponse{Success: true, Data: summary}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleShellNew(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.shellMgr == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell manager not available"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	// Parse args from the map
+	data, _ := json.Marshal(args)
+	var req protocol.ShellNewRequest
+	json.Unmarshal(data, &req)
+
+	shell, err := h.daemon.shellMgr.New(ShellSpecFromRequest(req))
+	if err != nil {
+		resp := &protocol.CommandResponse{Success: false, Error: err.Error()}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	info := shell.Info()
+
+	// Broadcast shell update
+	if h.daemon.subs != nil {
+		h.daemon.subs.Broadcast(&protocol.StreamEvent{
+			Kind:      "shell_update",
+			Timestamp: time.Now(),
+			Shell:     info,
+		})
+	}
+
+	resp := &protocol.CommandResponse{Success: true, Data: info}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleShellList(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.shellMgr == nil {
+		resp := &protocol.CommandResponse{Success: true, Data: []any{}}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	includeStopped := false
+	if v, ok := args["include_stopped"].(bool); ok {
+		includeStopped = v
+	}
+
+	shells := h.daemon.shellMgr.List(includeStopped)
+	infos := make([]*protocol.ShellInfo, len(shells))
+	for i, s := range shells {
+		infos[i] = s.Info()
+	}
+
+	resp := &protocol.CommandResponse{Success: true, Data: infos}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleShellKill(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.shellMgr == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell manager not available"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	data, _ := json.Marshal(args)
+	var req protocol.ShellKillRequest
+	json.Unmarshal(data, &req)
+
+	if req.ID == "" {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell id is required"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	sig := sigFromName(req.Signal)
+	if err := h.daemon.shellMgr.Kill(req.ID, sig); err != nil {
+		resp := &protocol.CommandResponse{Success: false, Error: err.Error()}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	resp := &protocol.CommandResponse{Success: true}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleShellSend(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.shellMgr == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell manager not available"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	data, _ := json.Marshal(args)
+	var req protocol.ShellSendRequest
+	json.Unmarshal(data, &req)
+
+	if req.ID == "" {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell id is required"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	shell := h.daemon.shellMgr.Get(req.ID)
+	if shell == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell not found"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	text := req.Text
+	if req.Enter {
+		text += "\n"
+	}
+	if err := shell.Write([]byte(text)); err != nil {
+		resp := &protocol.CommandResponse{Success: false, Error: err.Error()}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	resp := &protocol.CommandResponse{Success: true}
+	return protocol.NewEnvelope(protocol.MsgCommand, resp)
+}
+
+func (h *Handler) handleShellCapture(args map[string]any) (*protocol.Envelope, error) {
+	if h.daemon.shellMgr == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell manager not available"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	id, _ := args["id"].(string)
+	if id == "" {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell id is required"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	shell := h.daemon.shellMgr.Get(id)
+	if shell == nil {
+		resp := &protocol.CommandResponse{Success: false, Error: "shell not found"}
+		return protocol.NewEnvelope(protocol.MsgCommand, resp)
+	}
+
+	scrollback := shell.Scrollback().Bytes()
+	resp := &protocol.CommandResponse{Success: true, Data: string(scrollback)}
 	return protocol.NewEnvelope(protocol.MsgCommand, resp)
 }

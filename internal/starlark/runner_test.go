@@ -469,7 +469,7 @@ for r in results:
 }
 
 func TestExecute_ResponseAttrNames(t *testing.T) {
-	rh := newResponseHelper(nil, nil)
+	rh := newResponseHelper(nil, nil, nil)
 	names := rh.AttrNames()
 	expected := map[string]bool{"inject_context": true, "approve": true, "deny": true, "ask": true, "prompt": true, "set_output": true, "agent": true}
 	for _, n := range names {

@@ -12,7 +12,9 @@ import (
 
 	"github.com/byronellis/ragtime/internal/bus"
 	"github.com/byronellis/ragtime/internal/config"
+	"github.com/byronellis/ragtime/internal/db"
 	"github.com/byronellis/ragtime/internal/hook"
+	"github.com/byronellis/ragtime/internal/mux"
 	"github.com/byronellis/ragtime/internal/project"
 	"github.com/byronellis/ragtime/internal/protocol"
 	"github.com/byronellis/ragtime/internal/rag"
@@ -31,6 +33,8 @@ type Daemon struct {
 	indexer   *session.SessionIndexer
 	rag       *rag.Engine
 	bus       *bus.Bus
+	db           *db.DB
+	shellMgr     *mux.ShellManager
 	subs         *SubscriptionManager
 	interactions *InteractionManager
 	startedAt    time.Time
@@ -60,6 +64,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 	stateDir := filepath.Dir(d.cfg.Daemon.Socket)
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
+	}
+
+	// Open SQLite database
+	dbPath := filepath.Join(stateDir, "ragtime.db")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		d.logger.Error("open database", "error", err)
+		// Non-fatal: continue without DB
+	} else {
+		d.db = database
+		defer d.db.Close()
 	}
 
 	// Acquire exclusive lock to prevent multiple daemons
@@ -118,9 +133,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.subs = NewSubscriptionManager(d, d.logger)
 	d.interactions = NewInteractionManager(d.subs, d.logger)
 
+	// Initialize shell manager
+	d.shellMgr = mux.NewShellManager(d.db, d.logger)
+
 	// Initialize Starlark runner with RAG, TUI state, and interactions
 	starlarkRunner := ragstarlark.NewRunner(ragEngine, d.subs, d.logger)
 	starlarkRunner.SetInteractor(d.interactions)
+	starlarkRunner.SetShellManager(d.shellMgr)
 	d.engine.SetScripts(starlarkRunner)
 
 	// Subscribe to bus for TUI broadcasting
@@ -149,6 +168,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			Interactions: d.interactions,
 			Sessions:     d.sessions,
 			RAG:          webRAGAdapter(d.rag),
+			DB:           webDBAdapter(d.db),
+			ShellMgr:     webShellAdapter(d.shellMgr),
 			DaemonInfo: func() protocol.DaemonInfo {
 				return protocol.DaemonInfo{
 					PID:        os.Getpid(),
@@ -260,6 +281,73 @@ func (a *ragEngineAdapter) Search(collection, query string, topK int) ([]web.Sea
 		out[i] = web.SearchResult{Content: r.Content, Source: r.Source, Score: r.Score}
 	}
 	return out, nil
+}
+
+// dbAdapter adapts *db.DB to the web.DBQuerier interface.
+type dbAdapter struct{ d *db.DB }
+
+func webDBAdapter(d *db.DB) web.DBQuerier {
+	if d == nil {
+		return nil
+	}
+	return &dbAdapter{d: d}
+}
+
+func (a *dbAdapter) QueryStatusline(sessionID string, since time.Time, limit int) ([]web.StatuslineRow, error) {
+	records, err := a.d.QueryStatusline(sessionID, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]web.StatuslineRow, len(records))
+	for i, r := range records {
+		rows[i] = web.StatuslineRow{
+			ID:             r.ID,
+			Ts:             r.Ts,
+			SessionID:      r.SessionID,
+			Agent:          r.Agent,
+			Model:          r.Model,
+			NumTurns:       r.NumTurns,
+			CostUSD:        r.CostUSD,
+			InputTokens:    r.InputTokens,
+			OutputTokens:   r.OutputTokens,
+			CacheCreateTok: r.CacheCreateTok,
+			CacheReadTok:   r.CacheReadTok,
+			CWD:            r.CWD,
+		}
+	}
+	return rows, nil
+}
+
+func (a *dbAdapter) QueryStatuslineSummary(since time.Time) (*web.StatuslineSummaryRow, error) {
+	summary, err := a.d.QueryStatuslineSummary(since)
+	if err != nil {
+		return nil, err
+	}
+	return &web.StatuslineSummaryRow{
+		TotalCostUSD:   summary.TotalCostUSD,
+		TotalInputTok:  summary.TotalInputTok,
+		TotalOutputTok: summary.TotalOutputTok,
+		ByModel:        summary.ByModel,
+	}, nil
+}
+
+// shellMgrAdapter adapts *mux.ShellManager to the web.ShellLister interface.
+type shellMgrAdapter struct{ m *mux.ShellManager }
+
+func webShellAdapter(m *mux.ShellManager) web.ShellLister {
+	if m == nil {
+		return nil
+	}
+	return &shellMgrAdapter{m: m}
+}
+
+func (a *shellMgrAdapter) List(includeStopped bool) []protocol.ShellInfo {
+	shells := a.m.List(includeStopped)
+	infos := make([]protocol.ShellInfo, len(shells))
+	for i, s := range shells {
+		infos[i] = *s.Info()
+	}
+	return infos
 }
 
 func (d *Daemon) startWatcher() (*config.Watcher, error) {

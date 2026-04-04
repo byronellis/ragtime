@@ -51,12 +51,49 @@ type SearchResult struct {
 	Score   float32 `json:"score"`
 }
 
+// DBQuerier provides statusline query methods.
+type DBQuerier interface {
+	QueryStatusline(sessionID string, since time.Time, limit int) ([]StatuslineRow, error)
+	QueryStatuslineSummary(since time.Time) (*StatuslineSummaryRow, error)
+}
+
+// StatuslineRow is the web-layer statusline event type.
+type StatuslineRow struct {
+	ID             int64     `json:"id"`
+	Ts             time.Time `json:"ts"`
+	SessionID      string    `json:"session_id"`
+	Agent          string    `json:"agent"`
+	Model          string    `json:"model"`
+	NumTurns       int       `json:"num_turns"`
+	CostUSD        float64   `json:"cost_usd"`
+	InputTokens    int       `json:"input_tokens"`
+	OutputTokens   int       `json:"output_tokens"`
+	CacheCreateTok int       `json:"cache_create_tok"`
+	CacheReadTok   int       `json:"cache_read_tok"`
+	CWD            string    `json:"cwd"`
+}
+
+// StatuslineSummaryRow is the web-layer cost summary type.
+type StatuslineSummaryRow struct {
+	TotalCostUSD  float64            `json:"total_cost_usd"`
+	TotalInputTok int                `json:"total_input_tokens"`
+	TotalOutputTok int               `json:"total_output_tokens"`
+	ByModel       map[string]float64 `json:"by_model"`
+}
+
+// ShellLister provides shell listing.
+type ShellLister interface {
+	List(includeStopped bool) []protocol.ShellInfo
+}
+
 // Services bundles everything the web server needs from the daemon.
 type Services struct {
 	Events       EventBroadcaster
 	Interactions InteractionHandler
 	Sessions     SessionLister
-	RAG          RAGSearcher // may be nil
+	RAG          RAGSearcher  // may be nil
+	DB           DBQuerier    // may be nil
+	ShellMgr     ShellLister  // may be nil
 	DaemonInfo   func() protocol.DaemonInfo
 }
 
@@ -86,6 +123,9 @@ func NewServer(addr string, svc Services, logger *slog.Logger) *Server {
 	mux.HandleFunc("/api/sessions/{agent}/{id}/history", s.handleSessionHistory)
 	mux.HandleFunc("/api/interactions/{id}/respond", s.handleInteractionRespond)
 	mux.HandleFunc("/api/search", s.handleSearch)
+	mux.HandleFunc("/api/statusline", s.handleStatusline)
+	mux.HandleFunc("/api/cost/summary", s.handleCostSummary)
+	mux.HandleFunc("/api/shells", s.handleShells)
 
 	s.httpSrv = &http.Server{
 		Addr:    addr,
@@ -253,6 +293,66 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, results)
+}
+
+func (s *Server) handleStatusline(w http.ResponseWriter, r *http.Request) {
+	if s.svc.DB == nil {
+		http.Error(w, "database not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session")
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	var since time.Time
+	if v := r.URL.Query().Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			since = t
+		}
+	}
+
+	records, err := s.svc.DB.QueryStatusline(sessionID, since, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, records)
+}
+
+func (s *Server) handleCostSummary(w http.ResponseWriter, r *http.Request) {
+	if s.svc.DB == nil {
+		http.Error(w, "database not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	since := time.Now().Add(-24 * time.Hour)
+	if v := r.URL.Query().Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			since = t
+		}
+	}
+
+	summary, err := s.svc.DB.QueryStatuslineSummary(since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, summary)
+}
+
+func (s *Server) handleShells(w http.ResponseWriter, r *http.Request) {
+	if s.svc.ShellMgr == nil {
+		writeJSON(w, []any{})
+		return
+	}
+
+	shells := s.svc.ShellMgr.List(true)
+	writeJSON(w, shells)
 }
 
 // --- helpers ---

@@ -55,6 +55,15 @@ func GenerateClaudeHooks() *ClaudeHooksConfig {
 		}
 	}
 
+	// StatusUpdate hook — receives statusline JSON on stdin
+	hooks["StatusUpdate"] = []ClaudeHookEntry{
+		{
+			Hooks: []ClaudeHookDef{
+				{Type: "command", Command: "rt statusline --agent claude"},
+			},
+		},
+	}
+
 	return &ClaudeHooksConfig{Hooks: hooks}
 }
 

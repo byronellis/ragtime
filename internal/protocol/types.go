@@ -16,6 +16,16 @@ const (
 	MsgEvent                MessageType = "event"
 	MsgInteractionRequest   MessageType = "interaction_request"
 	MsgInteractionResponse  MessageType = "interaction_response"
+	MsgStatuslineEvent      MessageType = "statusline_event"
+
+	// Shell protocol messages
+	MsgShellNew    MessageType = "shell_new"
+	MsgShellAttach MessageType = "shell_attach"
+	MsgShellInput  MessageType = "shell_input"
+	MsgShellOutput MessageType = "shell_output"
+	MsgShellResize MessageType = "shell_resize"
+	MsgShellKill   MessageType = "shell_kill"
+	MsgShellSend   MessageType = "shell_send"
 )
 
 // Envelope wraps all messages sent over the wire protocol.
@@ -109,11 +119,93 @@ type SessionInfo struct {
 
 // StreamEvent wraps events pushed to TUI subscribers.
 type StreamEvent struct {
-	Kind        string              `json:"kind"` // "hook_event", "session_update", "interaction_request"
+	Kind        string              `json:"kind"` // "hook_event", "session_update", "interaction_request", "statusline", "shell_update"
 	Timestamp   time.Time           `json:"timestamp"`
 	Event       *HookEvent          `json:"event,omitempty"`
 	Session     *SessionInfo        `json:"session,omitempty"`
 	Interaction *InteractionRequest `json:"interaction,omitempty"`
+	Statusline  *StatuslineEvent    `json:"statusline,omitempty"`
+	Shell       *ShellInfo          `json:"shell,omitempty"`
+}
+
+// StatuslineEvent carries Claude Code statusline telemetry.
+type StatuslineEvent struct {
+	SessionID         string  `json:"session_id"`
+	Agent             string  `json:"agent"`
+	Model             string  `json:"model,omitempty"`
+	NumTurns          int     `json:"num_turns,omitempty"`
+	CostUSD           float64 `json:"cost_usd,omitempty"`
+	InputTokens       int     `json:"input_tokens,omitempty"`
+	OutputTokens      int     `json:"output_tokens,omitempty"`
+	CacheCreateTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadTokens   int     `json:"cache_read_input_tokens,omitempty"`
+	CWD               string  `json:"cwd,omitempty"`
+}
+
+// StatuslineSummary aggregates cost/token data.
+type StatuslineSummary struct {
+	TotalCostUSD  float64            `json:"total_cost_usd"`
+	TotalInputTok int                `json:"total_input_tokens"`
+	TotalOutputTok int               `json:"total_output_tokens"`
+	ByModel       map[string]float64 `json:"by_model"`
+}
+
+// ShellInfo describes a shell process.
+type ShellInfo struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Command   []string  `json:"command"`
+	CWD       string    `json:"cwd"`
+	State     string    `json:"state"`
+	StartedAt time.Time `json:"started_at"`
+	PID       int       `json:"pid,omitempty"`
+}
+
+// ShellNewRequest starts a new shell.
+type ShellNewRequest struct {
+	Name    string   `json:"name,omitempty"`
+	Command []string `json:"command"`
+	CWD     string   `json:"cwd,omitempty"`
+	Env     []string `json:"env,omitempty"`
+}
+
+// ShellAttachRequest attaches to a shell's PTY stream.
+type ShellAttachRequest struct {
+	ID   string `json:"id"`
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
+}
+
+// ShellInputMessage sends data to a shell's stdin.
+type ShellInputMessage struct {
+	ID   string `json:"id"`
+	Data []byte `json:"data"`
+}
+
+// ShellOutputMessage carries PTY output.
+type ShellOutputMessage struct {
+	ID   string `json:"id"`
+	Data []byte `json:"data"`
+}
+
+// ShellResizeMessage updates PTY dimensions.
+type ShellResizeMessage struct {
+	ID   string `json:"id"`
+	Cols uint16 `json:"cols"`
+	Rows uint16 `json:"rows"`
+}
+
+// ShellKillRequest sends a signal to a shell.
+type ShellKillRequest struct {
+	ID     string `json:"id"`
+	Signal string `json:"signal,omitempty"`
+}
+
+// ShellSendRequest sends text (optionally + Enter) to a shell.
+type ShellSendRequest struct {
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+	Enter bool   `json:"enter"`
 }
 
 // InteractionType determines the input mode for a TUI interaction.

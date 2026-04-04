@@ -30,11 +30,18 @@ type Interactor interface {
 	Prompt(text string, interType protocol.InteractionType, defaultVal string, timeoutSec int) protocol.InteractionResponse
 }
 
+// ShellWriter can write data to a shell by ID.
+type ShellWriter interface {
+	WriteToShell(id string, data []byte) error
+	ListShells() []string
+}
+
 // Runner compiles and executes Starlark scripts for hook actions.
 type Runner struct {
 	rag        hook.RAGSearcher
 	tui        TUIState
 	interactor Interactor
+	shellMgr   ShellWriter
 	logger     *slog.Logger
 
 	mu    sync.RWMutex
@@ -59,6 +66,11 @@ func (r *Runner) SetInteractor(i Interactor) {
 	r.interactor = i
 }
 
+// SetShellManager connects a shell manager for Starlark shell.send() support.
+func (r *Runner) SetShellManager(sm ShellWriter) {
+	r.shellMgr = sm
+}
+
 // Execute runs a Starlark script in the context of a hook event and returns the response.
 // If script starts with "file://" the source is loaded from disk.
 // Script errors are returned as errors, never panics.
@@ -81,7 +93,7 @@ func (r *Runner) Execute(script string, event *protocol.HookEvent) (resp *protoc
 	}
 
 	// Build predeclared namespace
-	respHelper := newResponseHelper(r.interactor, event)
+	respHelper := newResponseHelper(r.interactor, r.shellMgr, event)
 	predeclared := r.buildPredeclared(event, respHelper)
 
 	thread := &starlark.Thread{
@@ -147,6 +159,7 @@ func (r *Runner) predeclaredNames() starlark.StringDict {
 		"response":     starlark.None,
 		"rag":          starlark.None,
 		"tui":          starlark.None,
+		"shell":        starlark.None,
 		"log":          starlark.None,
 		"inject_input": starlark.None,
 	}

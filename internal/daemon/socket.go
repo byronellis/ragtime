@@ -104,6 +104,12 @@ func (s *SocketServer) handleConn(conn net.Conn) {
 		return
 	}
 
+	// Shell attach — bidirectional streaming
+	if env.Type == protocol.MsgShellAttach {
+		s.handleShellAttach(conn, env)
+		return
+	}
+
 	// Standard request-response
 	resp, err := s.handler.Handle(env)
 	if err != nil {
@@ -116,6 +122,86 @@ func (s *SocketServer) handleConn(conn net.Conn) {
 	if err := protocol.WriteMessage(conn, resp); err != nil {
 		s.logger.Error("write response", "error", err)
 	}
+}
+
+// handleShellAttach manages a bidirectional PTY attach connection.
+func (s *SocketServer) handleShellAttach(conn net.Conn, env *protocol.Envelope) {
+	var req protocol.ShellAttachRequest
+	if err := env.DecodePayload(&req); err != nil {
+		s.logger.Error("decode shell attach", "error", err)
+		return
+	}
+
+	daemon := s.subs.daemon
+	if daemon.shellMgr == nil {
+		s.logger.Error("shell manager not available")
+		return
+	}
+
+	shell := daemon.shellMgr.Get(req.ID)
+	if shell == nil {
+		s.logger.Error("shell not found", "id", req.ID)
+		return
+	}
+
+	// Resize if dimensions provided
+	if req.Cols > 0 && req.Rows > 0 {
+		shell.Resize(req.Cols, req.Rows)
+	}
+
+	// Send scrollback as initial output
+	scrollback := shell.Scrollback().Bytes()
+	if len(scrollback) > 0 {
+		outMsg := &protocol.ShellOutputMessage{ID: req.ID, Data: scrollback}
+		outEnv, err := protocol.NewEnvelope(protocol.MsgShellOutput, outMsg)
+		if err == nil {
+			protocol.WriteMessage(conn, outEnv)
+		}
+	}
+
+	// Subscribe to shell output
+	subCh, unsub := shell.Subscribe("attach-" + conn.RemoteAddr().String())
+	defer unsub()
+
+	// Writer goroutine: shell output -> conn
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for data := range subCh {
+			outMsg := &protocol.ShellOutputMessage{ID: req.ID, Data: data}
+			outEnv, err := protocol.NewEnvelope(protocol.MsgShellOutput, outMsg)
+			if err != nil {
+				return
+			}
+			if err := protocol.WriteMessage(conn, outEnv); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Reader loop: conn -> shell input/resize
+	for {
+		msg, err := protocol.ReadMessage(conn)
+		if err != nil {
+			break
+		}
+
+		switch msg.Type {
+		case protocol.MsgShellInput:
+			var input protocol.ShellInputMessage
+			if err := msg.DecodePayload(&input); err == nil {
+				shell.Write(input.Data)
+			}
+		case protocol.MsgShellResize:
+			var resize protocol.ShellResizeMessage
+			if err := msg.DecodePayload(&resize); err == nil {
+				shell.Resize(resize.Cols, resize.Rows)
+			}
+		}
+	}
+
+	// Wait for writer to finish
+	<-done
 }
 
 // handleStreamConn manages a persistent TUI subscription connection.

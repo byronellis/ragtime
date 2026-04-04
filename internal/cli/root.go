@@ -36,6 +36,8 @@ func NewRootCmd() *cobra.Command {
 		newSessionCmd(),
 		newRulesCmd(),
 		newTUICmd(),
+		newStatuslineCmd(),
+		newShCmd(),
 	)
 
 	return cmd

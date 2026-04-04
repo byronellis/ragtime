@@ -19,6 +19,7 @@ func (r *Runner) buildPredeclared(event *protocol.HookEvent, resp *responseHelpe
 		"response":     resp,
 		"rag":          r.ragModule(),
 		"tui":          r.tuiModule(),
+		"shell":        r.shellModule(),
 		"log":          starlark.NewBuiltin("log", r.logBuiltin),
 		"inject_input": starlark.NewBuiltin("inject_input", resp.injectInputBuiltin),
 	}
@@ -118,13 +119,15 @@ type responseHelper struct {
 	denyReason      string
 	outputOverrides map[string]any
 	interactor      Interactor
+	shellWriter     ShellWriter
 	event           *protocol.HookEvent
 }
 
-func newResponseHelper(interactor Interactor, event *protocol.HookEvent) *responseHelper {
+func newResponseHelper(interactor Interactor, shellWriter ShellWriter, event *protocol.HookEvent) *responseHelper {
 	return &responseHelper{
-		interactor: interactor,
-		event:      event,
+		interactor:  interactor,
+		shellWriter: shellWriter,
+		event:       event,
 	}
 }
 
@@ -282,7 +285,7 @@ func (rh *responseHelper) injectInputBuiltin(_ *starlark.Thread, _ *starlark.Bui
 			return nil, fmt.Errorf("inject_input: 'keys' must be a string")
 		}
 
-		if err := sendKeys(mux, keys); err != nil {
+		if err := sendKeys(mux, keys, rh.shellWriter); err != nil {
 			return nil, fmt.Errorf("inject_input: %w", err)
 		}
 
@@ -301,6 +304,14 @@ func (rh *responseHelper) injectInputBuiltin(_ *starlark.Thread, _ *starlark.Bui
 	return starlark.None, nil
 }
 
+// sendKeysRagtime sends keys to a ragtime shell via the shell manager.
+func (r *Runner) sendKeysRagtime(shellID string, keys string) error {
+	if r.shellMgr == nil {
+		return fmt.Errorf("shell manager not available")
+	}
+	return r.shellMgr.WriteToShell(shellID, []byte(keys))
+}
+
 // detectMux detects the terminal multiplexer from the event's MuxInfo or environment.
 func detectMux(event *protocol.HookEvent) *protocol.MuxInfo {
 	if event != nil && event.Mux != nil && event.Mux.Type != "" {
@@ -315,11 +326,14 @@ func detectMux(event *protocol.HookEvent) *protocol.MuxInfo {
 	if sty := os.Getenv("STY"); sty != "" {
 		return &protocol.MuxInfo{Type: "screen", SessionName: sty}
 	}
+	if shellID := os.Getenv("RAGTIME_SHELL_ID"); shellID != "" {
+		return &protocol.MuxInfo{Type: "ragtime", Pane: shellID}
+	}
 	return nil
 }
 
 // sendKeys sends a key sequence to the multiplexer pane.
-func sendKeys(mux *protocol.MuxInfo, keys string) error {
+func sendKeys(mux *protocol.MuxInfo, keys string, shellWriter ShellWriter) error {
 	switch mux.Type {
 	case "tmux":
 		args := []string{"send-keys"}
@@ -335,6 +349,12 @@ func sendKeys(mux *protocol.MuxInfo, keys string) error {
 			args = append([]string{"-S", mux.SessionName}, args...)
 		}
 		return exec.Command("screen", args...).Run()
+
+	case "ragtime":
+		if shellWriter == nil {
+			return fmt.Errorf("ragtime shell writer not available")
+		}
+		return shellWriter.WriteToShell(mux.Pane, []byte(keys))
 
 	default:
 		return fmt.Errorf("unsupported multiplexer type: %s", mux.Type)
@@ -399,6 +419,44 @@ func (r *Runner) tuiConnected(_ *starlark.Thread, _ *starlark.Builtin, args star
 		return starlark.False, nil
 	}
 	return starlark.Bool(r.tui.ClientCount() > 0), nil
+}
+
+// --- shell module ---
+
+func (r *Runner) shellModule() *starlarkstruct.Module {
+	return &starlarkstruct.Module{
+		Name: "shell",
+		Members: starlark.StringDict{
+			"send": starlark.NewBuiltin("shell.send", r.shellSend),
+			"list": starlark.NewBuiltin("shell.list", r.shellList),
+		},
+	}
+}
+
+func (r *Runner) shellSend(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var id, text string
+	if err := starlark.UnpackPositionalArgs("shell.send", args, kwargs, 2, &id, &text); err != nil {
+		return nil, err
+	}
+	if r.shellMgr == nil {
+		return starlark.None, fmt.Errorf("shell manager not available")
+	}
+	if err := r.shellMgr.WriteToShell(id, []byte(text)); err != nil {
+		return starlark.None, err
+	}
+	return starlark.None, nil
+}
+
+func (r *Runner) shellList(_ *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if r.shellMgr == nil {
+		return starlark.NewList(nil), nil
+	}
+	ids := r.shellMgr.ListShells()
+	items := make([]starlark.Value, len(ids))
+	for i, id := range ids {
+		items[i] = starlark.String(id)
+	}
+	return starlark.NewList(items), nil
 }
 
 // --- log builtin ---
