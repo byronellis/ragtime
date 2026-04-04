@@ -133,8 +133,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.subs = NewSubscriptionManager(d, d.logger)
 	d.interactions = NewInteractionManager(d.subs, d.logger)
 
-	// Initialize shell manager
+	// Initialize shell manager; inject socket path so all shells get RAGTIME_SOCKET
 	d.shellMgr = mux.NewShellManager(d.db, d.logger)
+	d.shellMgr.SetSocketPath(d.cfg.Daemon.Socket)
 
 	// Initialize Starlark runner with RAG, TUI state, and interactions
 	starlarkRunner := ragstarlark.NewRunner(ragEngine, d.subs, d.logger)

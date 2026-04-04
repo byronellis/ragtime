@@ -32,6 +32,7 @@ type Shell struct {
 	CWD       string
 	State     ShellState
 	StartedAt time.Time
+	ExtraEnv  []string // additional KEY=VALUE pairs injected alongside RAGTIME_SHELL_ID
 
 	ptmx       *os.File // PTY master
 	cmd        *exec.Cmd
@@ -63,8 +64,9 @@ func (s *Shell) start() error {
 		s.cmd.Dir = s.CWD
 	}
 
-	// Inherit environment, add RAGTIME_SHELL_ID
+	// Inherit environment, add RAGTIME_SHELL_ID and any extra vars
 	s.cmd.Env = append(os.Environ(), fmt.Sprintf("RAGTIME_SHELL_ID=%s", s.ID))
+	s.cmd.Env = append(s.cmd.Env, s.ExtraEnv...)
 
 	// Start with default size
 	ws := &pty.Winsize{Rows: 50, Cols: 220}

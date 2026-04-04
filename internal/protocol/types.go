@@ -140,6 +140,7 @@ type StatuslineEvent struct {
 	CacheCreateTokens int     `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadTokens   int     `json:"cache_read_input_tokens,omitempty"`
 	CWD               string  `json:"cwd,omitempty"`
+	ShellID           string  `json:"shell_id,omitempty"` // set when running inside rt sh
 }
 
 // StatuslineSummary aggregates cost/token data.

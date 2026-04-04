@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/byronellis/ragtime/internal/db"
@@ -20,10 +22,11 @@ type ShellSpec struct {
 
 // ShellManager manages the lifecycle of shell processes.
 type ShellManager struct {
-	mu     sync.RWMutex
-	shells map[string]*Shell
-	db     *db.DB
-	logger *slog.Logger
+	mu         sync.RWMutex
+	shells     map[string]*Shell
+	db         *db.DB
+	logger     *slog.Logger
+	socketPath string // injected as RAGTIME_SOCKET into all shells
 }
 
 // NewShellManager creates a new shell manager.
@@ -38,6 +41,11 @@ func NewShellManager(database *db.DB, logger *slog.Logger) *ShellManager {
 	}
 }
 
+// SetSocketPath configures the daemon socket path to inject into shells.
+func (m *ShellManager) SetSocketPath(path string) {
+	m.socketPath = path
+}
+
 // New creates and starts a new shell.
 func (m *ShellManager) New(spec ShellSpec) (*Shell, error) {
 	id := uuid.New().String()[:8]
@@ -47,12 +55,20 @@ func (m *ShellManager) New(spec ShellSpec) (*Shell, error) {
 		cwd, _ = os.Getwd()
 	}
 
+	// Build extra env vars: caller-supplied + RAGTIME_SOCKET
+	extraEnv := make([]string, 0, len(spec.Env)+1)
+	extraEnv = append(extraEnv, spec.Env...)
+	if m.socketPath != "" {
+		extraEnv = append(extraEnv, fmt.Sprintf("RAGTIME_SOCKET=%s", m.socketPath))
+	}
+
 	shell := &Shell{
-		ID:      id,
-		Name:    spec.Name,
-		Command: spec.Command,
-		CWD:     cwd,
-		logger:  m.logger,
+		ID:       id,
+		Name:     spec.Name,
+		Command:  spec.Command,
+		CWD:      cwd,
+		ExtraEnv: extraEnv,
+		logger:   m.logger,
 		onExit: func(shellID string, exitCode int) {
 			m.logger.Info("shell exited", "id", shellID, "exit_code", exitCode)
 			if m.db != nil {
@@ -66,9 +82,12 @@ func (m *ShellManager) New(spec ShellSpec) (*Shell, error) {
 		},
 	}
 
-	// Add extra env vars
-	if len(spec.Env) > 0 {
-		shell.cmd = nil // will be set in start()
+	// Warn if launching a known agent without hooks configured
+	if isAgentCommand(spec.Command) && spec.CWD != "" {
+		if !hasRagtimeHooks(spec.CWD) {
+			m.logger.Warn("launching agent without ragtime hooks configured; run 'rt setup claude' in the project directory",
+				"command", spec.Command[0], "cwd", spec.CWD)
+		}
 	}
 
 	if err := shell.start(); err != nil {
@@ -142,6 +161,25 @@ func (m *ShellManager) ListShells() []string {
 		}
 	}
 	return ids
+}
+
+// isAgentCommand returns true if the command looks like a known AI agent.
+func isAgentCommand(command []string) bool {
+	if len(command) == 0 {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(command[0]))
+	return base == "claude" || base == "gemini"
+}
+
+// hasRagtimeHooks checks whether the project directory has ragtime hooks configured.
+func hasRagtimeHooks(dir string) bool {
+	settingsPath := filepath.Join(dir, ".claude", "settings.local.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "rt hook")
 }
 
 // Kill sends a signal to a shell.

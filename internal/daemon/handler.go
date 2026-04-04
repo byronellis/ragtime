@@ -214,11 +214,14 @@ func (h *Handler) handleStatuslineEvent(env *protocol.Envelope) (*protocol.Envel
 
 	// Create a HookEvent for the bus so Starlark rules and TUI see it
 	raw := map[string]any{
-		"model":      e.Model,
-		"num_turns":  e.NumTurns,
-		"cost_usd":   e.CostUSD,
+		"model":         e.Model,
+		"num_turns":     e.NumTurns,
+		"cost_usd":      e.CostUSD,
 		"input_tokens":  e.InputTokens,
 		"output_tokens": e.OutputTokens,
+	}
+	if e.ShellID != "" {
+		raw["ragtime_shell_id"] = e.ShellID
 	}
 	hookEvt := &protocol.HookEvent{
 		EventType: "statusline",
@@ -226,6 +229,9 @@ func (h *Handler) handleStatuslineEvent(env *protocol.Envelope) (*protocol.Envel
 		Agent:     e.Agent,
 		CWD:       e.CWD,
 		Raw:       raw,
+	}
+	if e.ShellID != "" {
+		hookEvt.Mux = &protocol.MuxInfo{Type: "ragtime", Pane: e.ShellID}
 	}
 	h.daemon.bus.Publish(hookEvt)
 

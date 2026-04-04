@@ -40,8 +40,9 @@ func newShCmd() *cobra.Command {
 
 func newShNewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "new [-- command [args...]]",
+		Use:   "new [flags] [-- cmd [args...]]",
 		Short: "Start a new shell session",
+		Long:  "Start a new shell session. If a command is given after --, it is sent to the shell after startup (implies --attach).",
 		RunE:  runShNew,
 	}
 	cmd.Flags().String("name", "", "name for the shell session")
@@ -153,9 +154,16 @@ func runShNew(cmd *cobra.Command, args []string) error {
 	envVars, _ := cmd.Flags().GetStringArray("env")
 	attach, _ := cmd.Flags().GetBool("attach")
 
-	command := args
+	// Args after -- are a command to run inside the shell (not the shell itself).
+	// A command implies --attach.
+	var runArgs []string
+	if len(args) > 0 {
+		runArgs = args
+		attach = true
+	}
 
-	reqArgs := map[string]any{"command": command}
+	// Always start the default shell; never override it with the positional args.
+	reqArgs := map[string]any{"command": []string{}}
 	if name != "" {
 		reqArgs["name"] = name
 	}
@@ -180,6 +188,18 @@ func runShNew(cmd *cobra.Command, args []string) error {
 		displayName = info.ID[:8]
 	}
 	fmt.Printf("Shell %s started (pid %d)\n", displayName, info.PID)
+
+	// Send the run command before attaching so it's buffered and ready to execute.
+	if len(runArgs) > 0 {
+		text := strings.Join(runArgs, " ")
+		if _, err := sendCommand("shell-send", map[string]any{
+			"id":    info.ID,
+			"text":  text,
+			"enter": true,
+		}); err != nil {
+			return fmt.Errorf("send run command: %w", err)
+		}
+	}
 
 	if attach {
 		return doShellAttach(info.ID, displayName, info.Command)

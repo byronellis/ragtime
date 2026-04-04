@@ -45,8 +45,19 @@ func runStatusline(cmd *cobra.Command, args []string) error {
 	}
 	event.Agent = agent
 
-	// Resolve socket path
+	// If running inside a ragtime shell, tag the event for correlation
+	if shellID := os.Getenv("RAGTIME_SHELL_ID"); shellID != "" {
+		event.ShellID = shellID
+	}
+
+	// Resolve socket path: prefer RAGTIME_SOCKET env (fast path for shells),
+	// then flag, then config discovery
 	socketPath := flagSocket
+	if socketPath == "" {
+		if s := os.Getenv("RAGTIME_SOCKET"); s != "" {
+			socketPath = s
+		}
+	}
 	if socketPath == "" {
 		cfg, err := config.Load(".")
 		if err != nil {

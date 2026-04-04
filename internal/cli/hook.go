@@ -87,8 +87,23 @@ func runHookLive(cmd *cobra.Command) error {
 		return fmt.Errorf("unsupported agent: %s", agent)
 	}
 
-	// Resolve socket path
+	// If running inside a ragtime shell, attach mux info for correlation
+	if shellID := os.Getenv("RAGTIME_SHELL_ID"); shellID != "" {
+		event.Mux = &protocol.MuxInfo{Type: "ragtime", Pane: shellID}
+		if event.Raw == nil {
+			event.Raw = make(map[string]any)
+		}
+		event.Raw["ragtime_shell_id"] = shellID
+	}
+
+	// Resolve socket path: prefer RAGTIME_SOCKET env (fast path for shells),
+	// then flag, then config discovery
 	socketPath := flagSocket
+	if socketPath == "" {
+		if s := os.Getenv("RAGTIME_SOCKET"); s != "" {
+			socketPath = s
+		}
+	}
 	if socketPath == "" {
 		cfg, err := config.Load(".")
 		if err != nil {
