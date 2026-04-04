@@ -477,7 +477,7 @@ func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
 				entry["cwd"] = r.CWD
 				entry["statusline_ts"] = r.Ts
 
-				// Extract shell_id from raw_json
+				// Extract extra fields from raw_json
 				var raw map[string]any
 				if json.Unmarshal([]byte(r.RawJSON), &raw) == nil {
 					if shellID, ok := raw["shell_id"].(string); ok && shellID != "" {
@@ -485,6 +485,15 @@ func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
 						if info, ok := shellByID[shellID]; ok {
 							entry["shell_state"] = info.State
 							entry["shell_pid"] = info.PID
+						}
+					}
+					// Context window info (nested under "context_window" in Claude Code payload)
+					if cw, ok := raw["context_window"].(map[string]any); ok {
+						if pct, ok := cw["used_percentage"].(float64); ok {
+							entry["context_window_pct"] = pct
+						}
+						if size, ok := cw["context_window_size"].(float64); ok {
+							entry["context_window_size"] = size
 						}
 					}
 				}

@@ -724,9 +724,20 @@ func formatActiveSummary(s map[string]any) []byte {
 	if cacheCreate > 0 || cacheRead > 0 {
 		fmt.Fprintf(&sb, "Cache:    %s created / %s read\n",
 			formatTokens(int(cacheCreate)), formatTokens(int(cacheRead)))
-		// Context window estimate: input + cache_read is what the model actually sees
-		contextUsed := int(inputTok) + int(cacheRead)
-		fmt.Fprintf(&sb, "Context:  ~%s tokens in window\n", formatTokens(contextUsed))
+	}
+
+	contextWindowPct, hasPct := s["context_window_pct"].(float64)
+	contextWindowSize, hasSize := s["context_window_size"].(float64)
+	if hasPct {
+		bar := contextBar(contextWindowPct, 30)
+		if hasSize {
+			contextUsed := int(contextWindowPct / 100 * contextWindowSize)
+			fmt.Fprintf(&sb, "Context:  %s  %.1f%%  (%s / %s)\n",
+				bar, contextWindowPct,
+				formatTokens(contextUsed), formatTokens(int(contextWindowSize)))
+		} else {
+			fmt.Fprintf(&sb, "Context:  %s  %.1f%%\n", bar, contextWindowPct)
+		}
 	}
 
 	if shellID != "" {
@@ -757,6 +768,14 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", h)
 	}
 	return fmt.Sprintf("%dh%dm", h, m)
+}
+
+func contextBar(pct float64, width int) string {
+	filled := int(pct / 100 * float64(width))
+	if filled > width {
+		filled = width
+	}
+	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
 }
 
 func formatTokens(n int) string {
