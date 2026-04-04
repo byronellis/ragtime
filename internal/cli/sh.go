@@ -188,7 +188,7 @@ func runShNew(cmd *cobra.Command, args []string) error {
 }
 
 func runShList(cmd *cobra.Command, args []string) error {
-	resp, err := sendCommand("shell-list", map[string]any{"include_stopped": true})
+	resp, err := sendCommand("shell-list", map[string]any{"include_stopped": false})
 	if err != nil {
 		return err
 	}

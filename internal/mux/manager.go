@@ -57,9 +57,12 @@ func (m *ShellManager) New(spec ShellSpec) (*Shell, error) {
 			m.logger.Info("shell exited", "id", shellID, "exit_code", exitCode)
 			if m.db != nil {
 				ec := exitCode
-				state := "stopped"
-				m.db.UpdateShellState(shellID, state, &ec)
+				m.db.UpdateShellState(shellID, "stopped", &ec)
 			}
+			// Remove from live map; history is preserved in the DB.
+			m.mu.Lock()
+			delete(m.shells, shellID)
+			m.mu.Unlock()
 		},
 	}
 
