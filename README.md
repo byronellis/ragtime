@@ -11,21 +11,33 @@ Beyond context injection, ragtime provides:
 - **Session indexing** — every agent session is chunked and indexed for semantic search, so agents (and you) can find relevant past work across any harness
 - **Starlark rules** — dynamic logic for context injection, tool approval, RAG search, and interactive prompts
 - **Live TUI dashboard** — real-time event feed, session tracking, and interactive modals for tool approval
+- **FUSE filesystem** — mount a live view of all active agent sessions, shells, and telemetry as browsable files
+- **Shell sessions** — `rt sh` launches shells with full ragtime integration, correlating PTY output with agent hook events
+- **Statusline telemetry** — record Claude Code cost and context window usage per session
 - **Hook test mode** — develop and debug rules locally without running an agent
 
 ## Architecture
 
 ```
 Agent (Claude Code / Gemini CLI)
-  │ hook event (stdin JSON)
-  ▼
-rt hook ──► ragtime daemon ──► hook engine ──► rules (YAML + Starlark)
-  │              │                                    │
-  │              ├── session manager ──► RAG indexer   ├── rag.search()
-  │              ├── event bus ──► TUI subscribers     ├── response.prompt()
-  │              └── interaction manager               └── inject_input()
+  │ hook event (stdin JSON)       statusLine (stdin JSON)
+  ▼                               ▼
+rt hook ──► ragtime daemon ◄── rt statusline
+  │              │
+  │              ├── session manager ──► RAG indexer
+  │              ├── event bus ──► TUI subscribers
+  │              ├── shell manager (PTY sessions)
+  │              ├── interaction manager
+  │              └── SQLite (statusline telemetry)
   │
   ◄── hook response (stdout JSON)
+
+rt mount ──► FUSE filesystem (~/.ragtime/fs/)
+               ├── active/      live session dashboards
+               ├── agents/      per-agent PTY output + input
+               ├── sessions/    session history
+               ├── shells/      running shell processes
+               └── collections/ RAG index listings
 ```
 
 The daemon runs as a background process, communicating over a Unix socket. Hook events flow in, get matched against rules, and responses flow back — all within the agent's hook timeout window.
@@ -35,12 +47,18 @@ The daemon runs as a background process, communicating over a Unix socket. Hook 
 ```bash
 # Build
 go build -o rt ./cmd/ragtime
+codesign --sign "Apple Development: Your Name" rt
+cp rt /usr/local/bin/rt
 
 # Start the daemon
 rt start
 
 # Open the live dashboard
 rt tui
+
+# Mount the FUSE filesystem
+rt mount
+ls ~/.ragtime/fs/active/   # live session summaries
 ```
 
 ### Setting Up Hooks
@@ -52,17 +70,23 @@ Add to your Claude Code settings (`.claude/settings.local.json`):
 ```json
 {
   "hooks": {
-    "PreToolUse": [{ "command": "rt hook --agent claude --event pre-tool-use" }],
-    "PostToolUse": [{ "command": "rt hook --agent claude --event post-tool-use" }],
-    "PermissionRequest": [{ "command": "rt hook --agent claude --event permission-request" }],
-    "Stop": [{ "command": "rt hook --agent claude --event stop" }],
-    "SubagentStop": [{ "command": "rt hook --agent claude --event subagent-stop" }],
-    "Notification": [{ "command": "rt hook --agent claude --event notification" }],
-    "SessionStart": [{ "command": "rt hook --agent claude --event session-start" }],
-    "UserPromptSubmit": [{ "command": "rt hook --agent claude --event user-prompt-submit" }]
+    "PreToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event pre-tool-use" }] }],
+    "PostToolUse": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event post-tool-use" }] }],
+    "PermissionRequest": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event permission-request" }] }],
+    "Stop": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event stop" }] }],
+    "SubagentStop": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event subagent-stop" }] }],
+    "Notification": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event notification" }] }],
+    "SessionStart": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event session-start" }] }],
+    "UserPromptSubmit": [{ "matcher": ".*", "hooks": [{ "type": "command", "command": "rt hook --agent claude --event user-prompt-submit" }] }]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "rt statusline --agent claude"
   }
 }
 ```
+
+The `statusLine` entry records per-turn cost, token usage, and context window percentage to SQLite. Note the camelCase key — `statusLine`, not `statusline`.
 
 ### Writing Rules
 
@@ -140,8 +164,6 @@ actions:
       # If no TUI, fall through to agent's default behavior
 ```
 
-This rule intercepts Claude Code's permission prompts and routes them to a TUI modal with a 5-second auto-approve countdown. If the TUI isn't open, the hook is a no-op and the agent's normal permission dialog appears.
-
 ### Searching Sessions
 
 ```bash
@@ -153,8 +175,6 @@ rt search --collections
 ```
 
 ### Testing Rules
-
-Test rules locally without running an agent or daemon:
 
 ```bash
 # Synthetic event with specific rule files
@@ -169,6 +189,46 @@ rt hook --test --tool Read --input '{"file_path":"src/main.go"}' \
 rt hook --test --tui --tool Bash --input '{"command":"docker stop app"}' \
   --rule rules/review-bash.yaml
 ```
+
+## FUSE Filesystem
+
+`rt mount` exposes a live read-only (with writable exceptions) filesystem at `~/.ragtime/fs/`:
+
+```
+~/.ragtime/fs/
+├── active/
+│   └── <session-id>/
+│       ├── summary.txt      # cost, tokens, context window %, model
+│       └── status.json      # full session state as JSON
+├── agents/
+│   └── <agent-id>/
+│       ├── output.log       # live PTY output (for rt sh sessions)
+│       ├── input            # writable — send text to the agent
+│       └── notes/           # writable per-session notes
+├── sessions/                # session history
+├── shells/                  # running rt sh processes
+└── collections/             # RAG index listings
+```
+
+`active/` is populated from recent statusline events so it survives daemon restarts. Each session directory shows the current model, cumulative cost, token counts, and context window percentage.
+
+```bash
+rt mount            # mount at ~/.ragtime/fs/
+rt umount           # unmount
+cat ~/.ragtime/fs/active/*/summary.txt   # check all active sessions
+```
+
+## Shell Sessions
+
+`rt sh` launches a shell (or wraps a command) with full ragtime integration:
+
+```bash
+rt sh                        # interactive shell
+rt sh new -- claude          # launch agent with correlation
+rt sh new --name my-session  # named session
+```
+
+Shells launched via `rt sh` set `RAGTIME_SOCKET` and `RAGTIME_SHELL_ID` so hook events and statusline telemetry are automatically correlated with the PTY session. The shell's output is captured and visible in `active/<session>/output.log` via FUSE.
 
 ## Starlark API
 
@@ -196,7 +256,10 @@ Key capabilities:
 | `rt start/stop/restart` | Daemon lifecycle management |
 | `rt hook` | Agent hook handler (stdin/stdout JSON relay) |
 | `rt hook --test` | Local rule testing without daemon |
+| `rt statusline` | Record Claude Code statusLine telemetry to SQLite |
 | `rt tui` | Live terminal dashboard |
+| `rt mount / rt umount` | Mount/unmount the FUSE filesystem |
+| `rt sh` | Launch a shell or command with ragtime integration |
 | `rt search` | RAG collection search |
 | `rt index` | Index management |
 | `rt add` | Add content to collections |
@@ -208,15 +271,15 @@ Key capabilities:
 
 - [Starlark API Reference](docs/starlark-api.md) — complete rule scripting API
 - [Design Document](docs/design.md) — architecture and design decisions
-- [Example Rules](docs/examples/rules/) — starter rule templates
 
 ## Building
 
 ```bash
 go build -o rt ./cmd/ragtime
+codesign --sign "Apple Development: Your Name (TEAMID)" rt
 ```
 
-Requires Go 1.21+. Single binary, no external dependencies at runtime (embeddings require a local Ollama instance for RAG features).
+Requires Go 1.21+. Single binary, no external dependencies at runtime (embeddings require a local Ollama instance for RAG features). The FUSE filesystem requires [fuse-t](https://www.fuse-t.org/) on macOS.
 
 ## Status
 
@@ -239,6 +302,11 @@ Ragtime is in active early development — functional but not yet stable.
 | Markdown rendering | Working | Glamour-based rendering in TUI modals |
 | Hot reload | Working | Rule changes take effect immediately without daemon restart |
 | Session summary on connect | Working | `session-summary` rule injects recent session context on `SessionStart` via RAG search |
+| Statusline telemetry | Working | `rt statusline` records cost, tokens, model, and context window % per turn to SQLite |
+| FUSE filesystem | Working | `rt mount` exposes live session data, agent PTY output, and notes as browsable files |
+| Shell sessions | Working | `rt sh` launches correlated shell/agent sessions; PTY output captured in FUSE |
+| Active session dashboard | Working | `active/` FUSE dir shows per-session summary with cost/context window from DB |
+| Hook/shell correlation | Working | Hook events from `rt sh` sessions carry shell ID for cross-correlation |
 | Multi-agent support | Partial | Hook relay works with any agent; Starlark `response.agent` exposes platform name. Session capture tested with Claude Code only |
 
 ### What's next
