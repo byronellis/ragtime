@@ -128,19 +128,42 @@ type StreamEvent struct {
 	Shell       *ShellInfo          `json:"shell,omitempty"`
 }
 
-// StatuslineEvent carries Claude Code statusline telemetry.
+// StatuslineEvent carries Claude Code statusline telemetry (matches the real JSON format).
 type StatuslineEvent struct {
-	SessionID         string  `json:"session_id"`
-	Agent             string  `json:"agent"`
-	Model             string  `json:"model,omitempty"`
-	NumTurns          int     `json:"num_turns,omitempty"`
-	CostUSD           float64 `json:"cost_usd,omitempty"`
-	InputTokens       int     `json:"input_tokens,omitempty"`
-	OutputTokens      int     `json:"output_tokens,omitempty"`
-	CacheCreateTokens int     `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadTokens   int     `json:"cache_read_input_tokens,omitempty"`
-	CWD               string  `json:"cwd,omitempty"`
-	ShellID           string  `json:"shell_id,omitempty"` // set when running inside rt sh
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
+	Agent          string `json:"agent,omitempty"` // set by rt, not Claude Code
+	ShellID        string `json:"shell_id,omitempty"` // set when running inside rt sh
+
+	Model struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+	} `json:"model"`
+
+	Cost struct {
+		TotalCostUSD       float64 `json:"total_cost_usd"`
+		TotalDurationMs    int64   `json:"total_duration_ms"`
+		TotalApiDurationMs int64   `json:"total_api_duration_ms"`
+		TotalLinesAdded    int     `json:"total_lines_added"`
+		TotalLinesRemoved  int     `json:"total_lines_removed"`
+	} `json:"cost"`
+
+	ContextWindow struct {
+		TotalInputTokens  int `json:"total_input_tokens"`
+		TotalOutputTokens int `json:"total_output_tokens"`
+		ContextWindowSize int `json:"context_window_size"`
+		CurrentUsage      struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		} `json:"current_usage"`
+		UsedPercentage      int `json:"used_percentage"`
+		RemainingPercentage int `json:"remaining_percentage"`
+	} `json:"context_window"`
+
+	Version string `json:"version,omitempty"`
 }
 
 // StatuslineSummary aggregates cost/token data.

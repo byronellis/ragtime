@@ -199,13 +199,12 @@ func (h *Handler) handleStatuslineEvent(env *protocol.Envelope) (*protocol.Envel
 			Ts:             time.Now(),
 			SessionID:      e.SessionID,
 			Agent:          e.Agent,
-			Model:          e.Model,
-			NumTurns:       e.NumTurns,
-			CostUSD:        e.CostUSD,
-			InputTokens:    e.InputTokens,
-			OutputTokens:   e.OutputTokens,
-			CacheCreateTok: e.CacheCreateTokens,
-			CacheReadTok:   e.CacheReadTokens,
+			Model:          e.Model.ID,
+			CostUSD:        e.Cost.TotalCostUSD,
+			InputTokens:    e.ContextWindow.CurrentUsage.InputTokens,
+			OutputTokens:   e.ContextWindow.CurrentUsage.OutputTokens,
+			CacheCreateTok: e.ContextWindow.CurrentUsage.CacheCreationInputTokens,
+			CacheReadTok:   e.ContextWindow.CurrentUsage.CacheReadInputTokens,
 			CWD:            e.CWD,
 			RawJSON:        string(rawJSON),
 		}
@@ -216,11 +215,11 @@ func (h *Handler) handleStatuslineEvent(env *protocol.Envelope) (*protocol.Envel
 
 	// Create a HookEvent for the bus so Starlark rules and TUI see it
 	raw := map[string]any{
-		"model":         e.Model,
-		"num_turns":     e.NumTurns,
-		"cost_usd":      e.CostUSD,
-		"input_tokens":  e.InputTokens,
-		"output_tokens": e.OutputTokens,
+		"model":         e.Model.ID,
+		"cost_usd":      e.Cost.TotalCostUSD,
+		"input_tokens":  e.ContextWindow.CurrentUsage.InputTokens,
+		"output_tokens": e.ContextWindow.CurrentUsage.OutputTokens,
+		"used_pct":      e.ContextWindow.UsedPercentage,
 	}
 	if e.ShellID != "" {
 		raw["ragtime_shell_id"] = e.ShellID
@@ -439,8 +438,6 @@ func (h *Handler) handleShellCapture(args map[string]any) (*protocol.Envelope, e
 
 // handleActiveSessions returns a combined view of sessions + latest statusline + shell info.
 func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
-	sessions := h.daemon.sessions.List()
-
 	// Build shell map for O(1) lookups
 	shellByID := make(map[string]*protocol.ShellInfo)
 	if h.daemon.shellMgr != nil {
@@ -450,8 +447,9 @@ func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
 		}
 	}
 
-	var results []map[string]any
-	for _, sess := range sessions {
+	// Seed from in-memory session manager
+	entryMap := make(map[string]map[string]any)
+	for _, sess := range h.daemon.sessions.List() {
 		entry := map[string]any{
 			"agent":       sess.Agent,
 			"session_id":  sess.SessionID,
@@ -461,14 +459,32 @@ func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
 		if recent := sess.RecentEvents(1); len(recent) > 0 {
 			entry["last_event"] = recent[0].Timestamp
 		}
+		entryMap[sess.SessionID] = entry
+	}
 
-		// Latest statusline snapshot for this session
-		if h.daemon.db != nil {
-			records, err := h.daemon.db.QueryStatusline(sess.SessionID, time.Time{}, 1)
-			if err == nil && len(records) > 0 {
-				r := records[0]
+	// Merge recent statusline events from DB (covers sessions after daemon restart)
+	if h.daemon.db != nil {
+		since := time.Now().Add(-24 * time.Hour)
+		records, err := h.daemon.db.QueryStatusline("", since, 200)
+		if err == nil {
+			// Group by session_id, keep only the most recent record per session
+			latestBySession := make(map[string]db.StatuslineRecord)
+			for _, r := range records {
+				if _, seen := latestBySession[r.SessionID]; !seen {
+					latestBySession[r.SessionID] = r
+				}
+			}
+			for sessionID, r := range latestBySession {
+				entry, exists := entryMap[sessionID]
+				if !exists {
+					entry = map[string]any{
+						"agent":      r.Agent,
+						"session_id": r.SessionID,
+						"cwd":        r.CWD,
+					}
+					entryMap[sessionID] = entry
+				}
 				entry["model"] = r.Model
-				entry["num_turns"] = r.NumTurns
 				entry["cost_usd"] = r.CostUSD
 				entry["input_tokens"] = r.InputTokens
 				entry["output_tokens"] = r.OutputTokens
@@ -487,7 +503,6 @@ func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
 							entry["shell_pid"] = info.PID
 						}
 					}
-					// Context window info (nested under "context_window" in Claude Code payload)
 					if cw, ok := raw["context_window"].(map[string]any); ok {
 						if pct, ok := cw["used_percentage"].(float64); ok {
 							entry["context_window_pct"] = pct
@@ -499,7 +514,10 @@ func (h *Handler) handleActiveSessions() (*protocol.Envelope, error) {
 				}
 			}
 		}
+	}
 
+	results := make([]map[string]any, 0, len(entryMap))
+	for _, entry := range entryMap {
 		results = append(results, entry)
 	}
 
